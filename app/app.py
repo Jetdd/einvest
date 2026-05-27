@@ -226,643 +226,708 @@ full_a = _full_a()
 last_date_str = (full_a["date"].iloc[-1].date().isoformat()
                  if not full_a.empty else "—")
 
-# Probe market state early so the header pill can reflect today's state
-_PHASE_KIND = {
-    "高潮": "danger",
-    "抱团": "warning",
-    "主流轮动": "accent",
-    "下降趋势": "accent",
-    "酝酿": "muted",
-    "缩容": "warning",
-    "瓦解": "danger",
-    "中性": "muted",
-    "n/a": "muted",
+# 6-phase color mapping
+_PHASE6_KIND = {
+    "上行早期": "accent",
+    "上行中期": "success",
+    "上行晚期": "warning",
+    "下行早期": "warning",
+    "下行中期": "danger",
+    "下行晚期": "danger",
+    "震荡":     "muted",
+    "n/a":      "muted",
 }
 snap = _market_state()
-cycle_label = snap.cycle_phase if snap is not None else None
-cycle_kind = _PHASE_KIND.get(cycle_label, "muted") if cycle_label else "muted"
+phase6_label = snap.phase_6 if snap is not None else None
+phase6_kind = _PHASE6_KIND.get(phase6_label, "muted") if phase6_label else "muted"
 
 st.markdown(
     brand_bar(
         trade_date=last_date_str,
         n_stocks=len(u),
         n_themes=len(HOT_CONCEPTS),
-        state=cycle_label,
-        state_kind=cycle_kind,
+        state=phase6_label,
+        state_kind=phase6_kind,
     ),
     unsafe_allow_html=True,
 )
 
 
 # ---------------------------------------------------------------------------
-# Hero panel — market state composite
+# Hero panel — 6-phase + suggested position + suggested sectors
 # ---------------------------------------------------------------------------
 
 if snap is not None:
     st.markdown(
-        section_header("周期阶段", "Market cycle phase · SC30 + Breadth + MST + Liquidity"),
+        section_header("市场定位", "6-phase · Position · Resonance sectors"),
         unsafe_allow_html=True,
     )
 
-    ph1, ph2 = st.columns([1, 1])
-    ph1.markdown(
+    h1, h2, h3 = st.columns([1.1, 1.0, 2.0])
+
+    # 1. 当前阶段
+    h1.markdown(
         kpi_card(
             "当前阶段",
-            pill(snap.cycle_phase, kind=_PHASE_KIND.get(snap.cycle_phase, "muted"), size="lg"),
-            delta=(
-                f"市场 SC30 = {snap.breadth.get('market_sc30') or '—'}"
-                f"  ·  breadth = {snap.breadth['breadth_ratio']:.2f}"
-                f"  ·  MST5 = {snap.position_flex['mst_5']:.1f}"
-            ),
+            pill(snap.phase_6, kind=phase6_kind, size="lg"),
+            delta=snap.phase_6_strategy,
         ),
         unsafe_allow_html=True,
     )
-    ph2.markdown(
+
+    # 2. 建议仓位
+    sp = snap.suggested_position
+    hint_lo, hint_hi = snap.phase_6_position_hint
+    h2.markdown(
         kpi_card(
-            "流动性",
-            snap.position_flex["liquidity_band"],
-            delta=f"评分 {snap.position_flex['liquidity_score']}  ·  CCI84 = {snap.position_flex['cci84'] or '—'}",
+            "建议仓位",
+            f"{sp['score']:.0f}%",
+            delta=(
+                f"阶段区间 {hint_lo}-{hint_hi}%  ·  "
+                f"MA {sp['ma_score']:.0f} / MST {sp['mst_score']:.0f} / CCI {sp['cci_score']:.0f}"
+            ),
+            accent=True, value_size="xl",
         ),
+        unsafe_allow_html=True,
+    )
+
+    # 3. 建议板块 (top 5 SC30+SC3 共振)
+    if snap.suggested_sectors:
+        rows_html = ""
+        for s in snap.suggested_sectors[:5]:
+            ret5 = s.get("ret_5d")
+            ret5s = f" · {ret5:+.1f}%" if ret5 is not None and not pd.isna(ret5) else ""
+            rows_html += (
+                f"<div style='display:flex;justify-content:space-between;align-items:center;"
+                f"padding:3px 0;border-bottom:1px solid #F1F5F9'>"
+                f"<div><b style='color:#0F172A;font-size:13.5px'>{s['concept']}</b>"
+                f"  <span style='color:#94A3B8;font-size:11.5px'>[{s['theme']}]</span></div>"
+                f"<div style='color:#52c47a;font-size:12px;font-weight:600'>"
+                f"SC30 {s['sc30']:.0f} · SC3 {s['sc3']:.0f}{ret5s}</div>"
+                f"</div>"
+            )
+        body_html = f"<div style='margin-top:4px'>{rows_html}</div>"
+    else:
+        body_html = (
+            "<div style='color:#94A3B8;padding:18px 0;text-align:center;font-size:13px'>"
+            "暂无 SC30+SC3 共振向上板块</div>"
+        )
+
+    h3.markdown(
+        f'<div class="kpi-card">'
+        f'<div class="kpi-label">建议板块 · SC30+SC3 共振向上 Top 5</div>'
+        f'{body_html}'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
 
 # ---------------------------------------------------------------------------
-# Top KPI strip — quick market vitals
+# Main Tabs — 市场 + 个股
 # ---------------------------------------------------------------------------
 
-close_panel = _close_panel()
-codes_for_lim = tuple(_universe())
-liq_score = float(liquidity_score(full_a.set_index("date")["amt"], 252).iloc[-1])
-liq_amt_yi = float(full_a["amt"].iloc[-1]) / 1e8
-mst_df = mst(close_panel, windows=(5, 13, 50))
-mst_5 = float(mst_df["MST_5"].iloc[-1])
-mst_50 = float(mst_df["MST_50"].iloc[-1])
-udc = up_down_count(close_panel).iloc[-1]
-lc = _limit_count(codes_for_lim)
-lim_up = int(lc["limit_up_count"].iloc[-1]) if not lc.empty else 0
-lim_dn = int(lc["limit_down_count"].iloc[-1]) if not lc.empty else 0
-br = float(udc["breadth_ratio"])
-cb = _index("399006.XSHE")
-cb_cci84 = float(cci(cb, 84).iloc[-1]) if not cb.empty else float("nan")
+main_tabs = st.tabs(["📊 市场", "👤 个股"])
 
-st.markdown(
-    section_header("市场快照", "Top-of-book vitals"),
-    unsafe_allow_html=True,
-)
-k1, k2, k3, k4, k5, k6 = st.columns(6)
-k1.markdown(
-    kpi_card("流动性 (亿)", f"{liq_amt_yi:,.0f}",
-             delta=f"评分 {liq_score:.1f} · {liquidity_band(liq_score)}"),
-    unsafe_allow_html=True,
-)
-breadth_kind = "up" if br >= 1.0 else "down"
-k2.markdown(
-    kpi_card("Breadth", f"{br:.2f}",
-             delta=f"↑{int(udc['up_count'])}  ↓{int(udc['down_count'])}",
-             delta_kind=breadth_kind),
-    unsafe_allow_html=True,
-)
-k3.markdown(
-    kpi_card("涨停 / 跌停", f"{lim_up} / {lim_dn}",
-             delta=f"差额 {lim_up - lim_dn:+d}",
-             delta_kind="up" if lim_up > lim_dn else "down"),
-    unsafe_allow_html=True,
-)
-k4.markdown(
-    kpi_card("MST-5  短线", f"{mst_5:.1f}",
-             delta="% 站上 5 日均线"),
-    unsafe_allow_html=True,
-)
-k5.markdown(
-    kpi_card("MST-50  趋势", f"{mst_50:.1f}",
-             delta="% 站上 50 日均线"),
-    unsafe_allow_html=True,
-)
-cci_state = classify_cci(cb_cci84)
-cci_kind = "down" if cci_state == "超买" else ("up" if cci_state == "超卖" else "muted")
-k6.markdown(
-    kpi_card("创业板 CCI84", f"{cb_cci84:.0f}",
-             delta=cci_state, delta_kind=cci_kind),
-    unsafe_allow_html=True,
-)
+with main_tabs[0]:
+    # --- Market vitals strip ---
+    close_panel = _close_panel()
+    codes_for_lim = tuple(_universe())
+    liq_score = float(liquidity_score(full_a.set_index("date")["amt"], 252).iloc[-1])
+    liq_amt_yi = float(full_a["amt"].iloc[-1]) / 1e8
+    mst_df = mst(close_panel, windows=(5, 13, 50))
+    mst_5 = float(mst_df["MST_5"].iloc[-1])
+    mst_50 = float(mst_df["MST_50"].iloc[-1])
+    udc = up_down_count(close_panel).iloc[-1]
+    lc = _limit_count(codes_for_lim)
+    lim_up = int(lc["limit_up_count"].iloc[-1]) if not lc.empty else 0
+    lim_dn = int(lc["limit_down_count"].iloc[-1]) if not lc.empty else 0
+    br = float(udc["breadth_ratio"])
+    cb = _index("399006.XSHE")
+    cb_cci84 = float(cci(cb, 84).iloc[-1]) if not cb.empty else float("nan")
 
+    st.markdown(
+        section_header("市场快照", "Top-of-book vitals"),
+        unsafe_allow_html=True,
+    )
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1.markdown(
+        kpi_card("流动性 (亿)", f"{liq_amt_yi:,.0f}",
+                 delta=f"评分 {liq_score:.1f} · {liquidity_band(liq_score)}"),
+        unsafe_allow_html=True,
+    )
+    breadth_kind = "up" if br >= 1.0 else "down"
+    k2.markdown(
+        kpi_card("Breadth", f"{br:.2f}",
+                 delta=f"↑{int(udc['up_count'])}  ↓{int(udc['down_count'])}",
+                 delta_kind=breadth_kind),
+        unsafe_allow_html=True,
+    )
+    k3.markdown(
+        kpi_card("涨停 / 跌停", f"{lim_up} / {lim_dn}",
+                 delta=f"差额 {lim_up - lim_dn:+d}",
+                 delta_kind="up" if lim_up > lim_dn else "down"),
+        unsafe_allow_html=True,
+    )
+    k4.markdown(
+        kpi_card("MST-5  短线", f"{mst_5:.1f}",
+                 delta="% 站上 5 日均线"),
+        unsafe_allow_html=True,
+    )
+    k5.markdown(
+        kpi_card("MST-50  趋势", f"{mst_50:.1f}",
+                 delta="% 站上 50 日均线"),
+        unsafe_allow_html=True,
+    )
+    cci_state = classify_cci(cb_cci84)
+    cci_kind = "down" if cci_state == "超买" else ("up" if cci_state == "超卖" else "muted")
+    k6.markdown(
+        kpi_card("创业板 CCI84", f"{cb_cci84:.0f}",
+                 delta=cci_state, delta_kind=cci_kind),
+        unsafe_allow_html=True,
+    )
 
-# ---------------------------------------------------------------------------
-# Tabs
-# ---------------------------------------------------------------------------
+    tabs = st.tabs([
+        "📍 市场状态",
+        "📈 CCI",
+        "🔥 板块热力图",
+        "🏆 Top-K 排名迁移",
+        "💧 容量抱团",
+        "🌐 RRG 轮动",
+        "🌗 板块周期详情",
+        "📉 热度历史",
+    ])
 
-tabs = st.tabs([
-    "📍 市场状态",
-    "📈 CCI",
-    "🔥 板块热力图",
-    "🏆 Top-K 排名迁移",
-    "💧 容量抱团",
-    "🌐 RRG 轮动",
-    "🌗 板块周期详情",
-    "📉 热度历史",
-    "🏷️ 个股标签",
-])
+    # -------- Sub Tab 0: Market state detail ---------
+    with tabs[0]:
+        if snap is None:
+            st.warning("无法计算市场状态：万得全A 数据缺失。")
+        else:
+            msc30 = snap.breadth.get("market_sc30")
+            msc3 = snap.breadth.get("market_sc3")
+            mom5d = snap.breadth.get("market_sc30_5d_mom")
 
-# -------- Tab 0: Market state detail ---------
-with tabs[0]:
-    if snap is None:
-        st.warning("无法计算市场状态：万得全A 数据缺失。")
-    else:
-        msc30 = snap.breadth.get("market_sc30")
-        msc3 = snap.breadth.get("market_sc3")
-
-        # Market SC30/SC3 KPI row
-        ms1, ms2, ms3, ms4 = st.columns(4)
-        ms1.markdown(
-            kpi_card("市场 SC30",
-                     f"{msc30}" if msc30 is not None else "—",
-                     delta="万得全A · RSV₃₀ · 中期强弱",
-                     accent=True),
-            unsafe_allow_html=True,
-        )
-        ms2.markdown(
-            kpi_card("市场 SC3",
-                     f"{msc3}" if msc3 is not None else "—",
-                     delta="万得全A · RSV₃ · 短期强弱"),
-            unsafe_allow_html=True,
-        )
-        ms3.markdown(
-            kpi_card("breadth_ratio",
-                     f"{snap.breadth['breadth_ratio']:.2f}",
-                     delta=f"↑{snap.breadth['up_count']}  ↓{snap.breadth['down_count']}",
-                     delta_kind="up" if snap.breadth['breadth_ratio'] >= 1.0 else "down"),
-            unsafe_allow_html=True,
-        )
-        ms4.markdown(
-            kpi_card("热点 SC30 (max)",
-                     f"{snap.breadth.get('top_sc30') or '—'}",
-                     delta="最强概念 SC30"),
-            unsafe_allow_html=True,
-        )
-
-        st.markdown(
-            section_header("规则与口径", "Methodology"),
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            """
-- **市场 SC30** = 万得全A 收盘的 30 日 RSV，对标原始框架的 SC30 中期（如原框架 46.9）
-- **周期阶段**（市场级，基于 SC30 万得全A）：
-  - 高潮：SC30 ≥ 80 且强势板块 ≥ 20% 且 breadth_ratio > 1.2
-  - 抱团：SC30 ≥ 70 且强势板块 ≥ 25%
-  - 主流轮动：SC30 ≥ 55 且强势板块 ≥ 15%
-  - 下降趋势：SC30 < 55 且 breadth_ratio < 1.0（对标原框架 B2_EXIT / 下降趋势）
-  - 缩容：流动性匮乏 且 MST5 < 40
-  - 瓦解：SC30 < 30 且 breadth_ratio < 0.5
-  - 酝酿：强势板块 < 10% 且 SC30 < 50
-
-> ⚠️ 市场温度 / 仓位三分法（§10）口径尚在对齐中，暂不显示。
-            """
-        )
-
-# -------- Tab 1: CCI ---------
-with tabs[1]:
-    st.subheader("CCI — 主指数顶底")
-    cci_rows = []
-    for name, code in MAIN_INDICES.items():
-        df = _index(code)
-        if df.empty:
-            continue
-        c14 = cci(df, 14)
-        c84 = cci(df, 84)
-        cci_rows.append({
-            "name": name,
-            "code": code,
-            "close": round(float(df["close"].iloc[-1]), 2),
-            "cci14": round(float(c14.iloc[-1]), 2),
-            "状态14": classify_cci(c14.iloc[-1]),
-            "cci84": round(float(c84.iloc[-1]), 2),
-            "状态84": classify_cci(c84.iloc[-1]),
-        })
-    cci_df = pd.DataFrame(cci_rows)
-
-    def _color_state(v: str) -> str:
-        return {
-            "超买": "background-color: #fde0e0; color: #c70000",
-            "偏多": "background-color: #fff7e0; color: #b88500",
-            "偏空": "background-color: #eaf2ff; color: #0050b3",
-            "超卖": "background-color: #e0f0ff; color: #003a8c",
-        }.get(v, "")
-
-    sty = cci_df.style.applymap(_color_state, subset=["状态14", "状态84"]) \
-        .format({"close": "{:.2f}", "cci14": "{:.2f}", "cci84": "{:.2f}"})
-    st.dataframe(sty, width="stretch", hide_index=True)
-    st.caption("CCI14 短期；CCI84 中长期。>100 超买，0~100 偏多，-100~0 偏空，<-100 超卖。")
-
-# -------- Tab 2: Heatmap ---------
-with tabs[2]:
-    st.subheader("板块热力图 — RSI(14) 板块价 → EMA(5)")
-
-    h = _heatmap_latest().copy()
-    h = h.dropna(subset=["heat"])
-
-    # Color-coded heatmap (one row per theme, one cell per concept)
-    themes = list(HOT_CONCEPTS.keys())
-    max_cols = max(len(v) for v in HOT_CONCEPTS.values())
-
-    z = np.full((len(themes), max_cols), np.nan)
-    text = np.full((len(themes), max_cols), "", dtype=object)
-    hover = np.full((len(themes), max_cols), "", dtype=object)
-    for i, theme in enumerate(themes):
-        for j, concept in enumerate(HOT_CONCEPTS[theme]):
-            row = h[h["concept"] == concept]
-            if row.empty:
-                continue
-            r = row.iloc[0]
-            z[i, j] = r["heat"]
-            arrow = r["arrow"] if r["arrow"] != "n/a" else ""
-            text[i, j] = f"{concept}<br>{r['heat']:.0f} {arrow}"
-            hover[i, j] = (
-                f"{concept}<br>heat={r['heat']:.1f}<br>"
-                f"昨日={r['prev_heat']:.1f} Δ={r['delta']:+.2f}<br>"
-                f"色带={r['band']}<br>n={r['n_stocks']}"
+            # Market SC30/SC3/MOM/breadth KPI row
+            ms1, ms2, ms3, ms4 = st.columns(4)
+            ms1.markdown(
+                kpi_card("市场 SC30",
+                         f"{msc30}" if msc30 is not None else "—",
+                         delta="万得全A · RSV₃₀ · 中期强弱",
+                         accent=True),
+                unsafe_allow_html=True,
+            )
+            ms2.markdown(
+                kpi_card("市场 SC3",
+                         f"{msc3}" if msc3 is not None else "—",
+                         delta="万得全A · RSV₃ · 短期强弱"),
+                unsafe_allow_html=True,
+            )
+            mom_kind = "up" if (mom5d or 0) > 0 else "down"
+            ms3.markdown(
+                kpi_card("SC30 5日Mom",
+                         f"{mom5d:+.1f}" if mom5d is not None else "—",
+                         delta="方向 = 趋势加速/减速",
+                         delta_kind=mom_kind),
+                unsafe_allow_html=True,
+            )
+            ms4.markdown(
+                kpi_card("breadth_ratio",
+                         f"{snap.breadth['breadth_ratio']:.2f}",
+                         delta=f"↑{snap.breadth['up_count']}  ↓{snap.breadth['down_count']}",
+                         delta_kind="up" if snap.breadth['breadth_ratio'] >= 1.0 else "down"),
+                unsafe_allow_html=True,
             )
 
-    fig = go.Figure(go.Heatmap(
-        z=z,
-        text=text,
-        texttemplate="%{text}",
-        hoverinfo="text",
-        hovertext=hover,
-        x=[f"col{i+1}" for i in range(max_cols)],
-        y=themes,
-        colorscale=[
-            [0.00, "#0f7d4a"],   # 深绿
-            [0.35, "#52c47a"],   # 绿
-            [0.45, "#a8e0b5"],   # 亮绿
-            [0.50, "#fff3b0"],   # 黄
-            [0.55, "#ffd9a0"],   # 浅红
-            [0.65, "#ff9b6c"],   # 红
-            [0.75, "#e8593b"],   # 深红
-            [0.90, "#9b30b3"],   # 紫红
-            [1.00, "#5e0066"],
-        ],
-        zmin=0, zmax=100,
-        showscale=True,
-        colorbar=dict(title="heat"),
-    ))
-    fig.update_layout(
-        height=70 * len(themes) + 100,
-        margin=dict(l=80, r=20, t=20, b=20),
-        xaxis=dict(showticklabels=False, showgrid=False),
-        yaxis=dict(autorange="reversed"),
-    )
-    st.plotly_chart(fig, width="stretch")
+            # 仓位分解
+            st.markdown(
+                section_header("仓位分解", "MA matrix · MST · CCI weighted"),
+                unsafe_allow_html=True,
+            )
+            sp = snap.suggested_position
+            p1, p2, p3, p4 = st.columns(4)
+            p1.markdown(
+                kpi_card("MA 矩阵分", f"{sp['ma_score']:.0f}",
+                         delta="权重 0.5 · 4 主指数站上 MA5/13/50 比例"),
+                unsafe_allow_html=True,
+            )
+            p2.markdown(
+                kpi_card("MST 分", f"{sp['mst_score']:.0f}",
+                         delta="权重 0.3 · MST5/13/50 均值"),
+                unsafe_allow_html=True,
+            )
+            p3.markdown(
+                kpi_card("CCI 分", f"{sp['cci_score']:.0f}",
+                         delta=f"权重 0.2 · CCI84 = {snap.position_flex.get('cci84') or '—'}"),
+                unsafe_allow_html=True,
+            )
+            hint_lo, hint_hi = snap.phase_6_position_hint
+            p4.markdown(
+                kpi_card("加权 = 建议仓位", f"{sp['score']:.1f}",
+                         delta=f"阶段区间 {hint_lo}-{hint_hi}%",
+                         accent=True),
+                unsafe_allow_html=True,
+            )
 
-    with st.expander("热力图全表（按 heat 降序）"):
-        cols = ["theme", "concept", "heat", "delta", "arrow", "band", "n_stocks"]
-        st.dataframe(h[cols].sort_values("heat", ascending=False),
-                     width="stretch", hide_index=True)
+            st.markdown(
+                section_header("规则与口径", "Methodology"),
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "- **市场 SC30** = 万得全A 收盘的 30 日 RSV，对标原始框架 SC30 中期\n"
+                "- **6 阶段判定**（基于 SC30 + 5日Mom + CCI84 + breadth + 流动性）：\n"
+                "  - 上行早期：SC30 < 50，但 5日Mom > 0 且 breadth > 1.0\n"
+                "  - 上行中期：SC30 ∈ [50, 75)，5日Mom > 0\n"
+                "  - 上行晚期：SC30 ≥ 75，**或** CCI84 > 120 且 breadth < 1.0\n"
+                "  - 下行早期：SC30 < 55 且 breadth < 1.0\n"
+                "  - 下行中期：SC30 < 40 且 流动性 < 45\n"
+                "  - 下行晚期：SC30 < 25 且 breadth < 0.5\n"
+                "- **建议仓位** = 0.5 × MA矩阵 + 0.3 × MST + 0.2 × CCI（PDF §7 基础+弹性融合）\n"
+                "- **建议板块** = SC30 ≥ 50 且 SC3 ≥ 50 且 5日涨幅 > 0（中期+短期共振向上）\n"
+                "\n"
+                "> ⚠️ 历史风险评分（T+1/T+5/T+20 胜率）将在 Step 3 加入。"
+            )
 
-
-# -------- Tab 3: Top-K migration ---------
-with tabs[3]:
-    st.subheader("板块 Top-K N日涨幅排名 + 迁移")
-
-    col_a, col_b = st.columns([1, 4])
-    n_days = col_a.selectbox("N 日窗口", [1, 3, 5, 10, 20], index=2, key="topk_n_days")
-    k = col_a.selectbox("Top K", [3, 5, 7, 10], index=2, key="topk_k")
-
-    sec_panel = _sector_panel()
-    rets = n_day_return(sec_panel, n_days)
-    last = rets.iloc[-1].dropna().sort_values(ascending=False).head(k)
-
-    top_df = pd.DataFrame({
-        "rank": range(1, len(last) + 1),
-        "concept": last.index,
-        f"{n_days}日涨幅(%)": last.values.round(2),
-    })
-
-    col_b.markdown(f"#### 今日 Top {k} (按 {n_days} 日涨幅)")
-    col_b.dataframe(top_df, width="stretch", hide_index=True)
-
-    st.markdown("#### 迁移（今日 ∪ 昨日 Top-K）")
-    mig = latest_topk_migration(rets, k=k)
-    if not mig.empty:
-        tag_color = {
-            "连续": "background-color: #f5f5f5; color: #595959",
-            "新晋": "background-color: #d9f7be; color: #237804",
-            "回归": "background-color: #e6f4ff; color: #003a8c",
-            "掉出": "background-color: #fff1f0; color: #cf1322",
-        }
-        sty = mig.style.applymap(
-            lambda v: tag_color.get(v, ""), subset=["tag"]
-        ).format({"ret_pct_today": "{:.2f}"})
-        st.dataframe(sty, width="stretch", hide_index=True)
-
-
-# -------- Tab 4: Crowding (容量抱团) ---------
-with tabs[4]:
-    st.markdown(
-        section_header("容量抱团", "Capital concentration in leading themes"),
-        unsafe_allow_html=True,
-    )
-
-    cr = _crowding()
-    if cr.empty:
-        st.info("无可用容量抱团数据。")
-    else:
-        mc = market_crowding_state(cr)
-        m1, m2, m3, m4 = st.columns(4)
-        m1.markdown(
-            kpi_card("Top 主题", f"{mc.get('top_theme', '—')}",
-                     delta=f"占全市 {mc.get('top_theme_share_pct', 0):.2f}%",
-                     value_size="sm", accent=True),
-            unsafe_allow_html=True,
-        )
-        m2.markdown(
-            kpi_card("Top2 浓度", f"{mc.get('top2_concentration_pct', 0):.2f}%",
-                     delta="Top1 + Top2 主题占全市"),
-            unsafe_allow_html=True,
-        )
-        decay_val = mc.get("top_theme_decay_pct")
-        m3.markdown(
-            kpi_card("Top 主题衰减",
-                     f"{decay_val:.1f}%" if decay_val is not None else "—",
-                     delta="从 60 日峰值的回落幅度"),
-            unsafe_allow_html=True,
-        )
-        abs_c = mc.get("abs_crowding", False)
-        abs_pill = (pill("触发", kind="danger", size="lg") if abs_c
-                    else pill("未触发", kind="success", size="lg"))
-        m4.markdown(
-            kpi_card("绝对抱团", abs_pill,
-                     delta=f"阈值 {mc.get('abs_share_threshold_pct', 8):.0f}%"),
-            unsafe_allow_html=True,
-        )
-
-        st.markdown(
-            section_header("概念级容量明细", "Sorted by market share, descending"),
-            unsafe_allow_html=True,
-        )
-
-        # Filters
-        col_a, col_b = st.columns([1, 4])
-        only_top7 = col_a.checkbox("只看 in Top7", value=False, key="crowding_only_top7")
-        min_share = col_a.number_input("最小 share (%)", value=0.5, step=0.5, key="crowding_min_share")
-
-        view = cr.copy()
-        if only_top7:
-            view = view[view["days_in_top7"] > 0]
-        view = view[view["share_pct"] >= min_share]
-
-        show_cols = [
-            "theme", "concept", "top_n_amount_yi", "share_pct",
-            "strength_pct", "decay_pct", "days_in_top7",
-        ]
-        view = view[show_cols].rename(columns={
-            "top_n_amount_yi": "top5成交额(亿)",
-            "share_pct": "占全市(%)",
-            "strength_pct": "60日分位(%)",
-            "decay_pct": "衰减(%)",
-            "days_in_top7": "Top7连续天",
-        })
-        sty = view.style \
-            .background_gradient(subset=["占全市(%)"], cmap="Reds", vmin=0, vmax=8) \
-            .background_gradient(subset=["60日分位(%)"], cmap="Reds", vmin=0, vmax=100) \
-            .background_gradient(subset=["衰减(%)"], cmap="Blues", vmin=0, vmax=40) \
-            .format({"top5成交额(亿)": "{:.0f}", "占全市(%)": "{:.2f}",
-                     "60日分位(%)": "{:.0f}", "衰减(%)": "{:.1f}"})
-        st.dataframe(sty, width="stretch", hide_index=True, height=520)
-
-        st.caption(
-            "**share_pct** = 主题 top5 成交额 / 全市场成交额 × 100。"
-            "**60日分位** = share_pct 在过去 60 日的滚动百分位（接近 100 = 历史高位）。"
-            "**衰减** = (60日峰值 − 当前 share) / 峰值 × 100。"
-            "**Top7连续天** = 在 5 日涨幅 Top7 中连续在榜天数。"
-        )
-
-
-# -------- Tab 5: RRG rotation ---------
-with tabs[5]:
-    st.markdown(
-        section_header("RRG 相对轮动", "Sector momentum vs CSI 300"),
-        unsafe_allow_html=True,
-    )
-
-    rdf = _rrg()
-    if rdf.empty:
-        st.info("无可用 RRG 数据。")
-    else:
-        # Quadrant counts
-        qc = rdf["quadrant"].value_counts()
-        q1, q2, q3, q4 = st.columns(4)
-        q1.markdown(kpi_card("领涨 Leading",  str(qc.get("领涨", 0)),
-                             delta="RS+ · MOM+", accent=True), unsafe_allow_html=True)
-        q2.markdown(kpi_card("转强 Improving", str(qc.get("转强", 0)),
-                             delta="RS- · MOM+"), unsafe_allow_html=True)
-        q3.markdown(kpi_card("转弱 Weakening", str(qc.get("转弱", 0)),
-                             delta="RS+ · MOM-"), unsafe_allow_html=True)
-        q4.markdown(kpi_card("落后 Lagging",   str(qc.get("落后", 0)),
-                             delta="RS- · MOM-"), unsafe_allow_html=True)
-
-        # Theme filter
-        col_a, col_b = st.columns([1, 4])
-        sel_theme = col_a.multiselect(
-            "主题筛选",
-            sorted(rdf["theme"].dropna().unique()),
-            key="rrg_theme_filter",
-        )
-        show_trail = col_a.checkbox("显示轨迹", value=True, key="rrg_show_trail")
-        view = rdf if not sel_theme else rdf[rdf["theme"].isin(sel_theme)]
-        view = view.dropna(subset=["rs_ratio", "rs_momentum"])
-
-        # Scatter plot
-        fig = go.Figure()
-
-        # Quadrant background shading
-        fig.add_shape(type="rect", x0=0, y0=0, x1=5, y1=5,
-                      fillcolor="rgba(82, 196, 122, 0.10)", line_width=0)  # 领涨
-        fig.add_shape(type="rect", x0=-5, y0=0, x1=0, y1=5,
-                      fillcolor="rgba(64, 169, 255, 0.10)", line_width=0)  # 转强
-        fig.add_shape(type="rect", x0=0, y0=-5, x1=5, y1=0,
-                      fillcolor="rgba(255, 215, 100, 0.10)", line_width=0)  # 转弱
-        fig.add_shape(type="rect", x0=-5, y0=-5, x1=0, y1=0,
-                      fillcolor="rgba(255, 130, 130, 0.10)", line_width=0)  # 落后
-
-        fig.add_hline(y=0, line_dash="dot", line_color="#999")
-        fig.add_vline(x=0, line_dash="dot", line_color="#999")
-
-        # Quadrant labels (corner annotations)
-        fig.add_annotation(x=3.5, y=3.5, text="<b>领涨 Leading</b>",
-                            showarrow=False, font=dict(color="#237804", size=14))
-        fig.add_annotation(x=-3.5, y=3.5, text="<b>转强 Improving</b>",
-                            showarrow=False, font=dict(color="#003a8c", size=14))
-        fig.add_annotation(x=3.5, y=-3.5, text="<b>转弱 Weakening</b>",
-                            showarrow=False, font=dict(color="#874d00", size=14))
-        fig.add_annotation(x=-3.5, y=-3.5, text="<b>落后 Lagging</b>",
-                            showarrow=False, font=dict(color="#cf1322", size=14))
-
-        # Plot trails first (so points are on top)
-        if show_trail:
-            for _, row in view.iterrows():
-                tr = [v for v in row["trail_rs"] if v is not None]
-                tm = [v for v in row["trail_mom"] if v is not None]
-                if len(tr) < 2:
-                    continue
-                fig.add_trace(go.Scatter(
-                    x=tr, y=tm, mode="lines",
-                    line=dict(color="rgba(150,150,150,0.35)", width=1),
-                    hoverinfo="skip", showlegend=False,
-                ))
-
-        # Plot current positions, color by quadrant
-        qcolor = {"领涨": "#52c47a", "转强": "#40a9ff",
-                  "转弱": "#fa8c16", "落后": "#cf1322"}
-        for q, color in qcolor.items():
-            sub = view[view["quadrant"] == q]
-            if sub.empty:
+    # -------- Tab 1: CCI ---------
+    with tabs[1]:
+        st.subheader("CCI — 主指数顶底")
+        cci_rows = []
+        for name, code in MAIN_INDICES.items():
+            df = _index(code)
+            if df.empty:
                 continue
-            fig.add_trace(go.Scatter(
-                x=sub["rs_ratio"], y=sub["rs_momentum"],
-                mode="markers+text",
-                marker=dict(color=color, size=11, line=dict(color="white", width=1)),
-                text=sub["concept"],
-                textposition="top center",
-                textfont=dict(size=10),
-                name=q,
-                hovertemplate="<b>%{text}</b><br>RS=%{x:.2f} MOM=%{y:.2f}<extra></extra>",
-            ))
+            c14 = cci(df, 14)
+            c84 = cci(df, 84)
+            cci_rows.append({
+                "name": name,
+                "code": code,
+                "close": round(float(df["close"].iloc[-1]), 2),
+                "cci14": round(float(c14.iloc[-1]), 2),
+                "状态14": classify_cci(c14.iloc[-1]),
+                "cci84": round(float(c84.iloc[-1]), 2),
+                "状态84": classify_cci(c84.iloc[-1]),
+            })
+        cci_df = pd.DataFrame(cci_rows)
 
+        def _color_state(v: str) -> str:
+            return {
+                "超买": "background-color: #fde0e0; color: #c70000",
+                "偏多": "background-color: #fff7e0; color: #b88500",
+                "偏空": "background-color: #eaf2ff; color: #0050b3",
+                "超卖": "background-color: #e0f0ff; color: #003a8c",
+            }.get(v, "")
+
+        sty = cci_df.style.applymap(_color_state, subset=["状态14", "状态84"]) \
+            .format({"close": "{:.2f}", "cci14": "{:.2f}", "cci84": "{:.2f}"})
+        st.dataframe(sty, width="stretch", hide_index=True)
+        st.caption("CCI14 短期；CCI84 中长期。>100 超买，0~100 偏多，-100~0 偏空，<-100 超卖。")
+
+    # -------- Tab 2: Heatmap ---------
+    with tabs[2]:
+        st.subheader("板块热力图 — RSI(14) 板块价 → EMA(5)")
+
+        h = _heatmap_latest().copy()
+        h = h.dropna(subset=["heat"])
+
+        # Color-coded heatmap (one row per theme, one cell per concept)
+        themes = list(HOT_CONCEPTS.keys())
+        max_cols = max(len(v) for v in HOT_CONCEPTS.values())
+
+        z = np.full((len(themes), max_cols), np.nan)
+        text = np.full((len(themes), max_cols), "", dtype=object)
+        hover = np.full((len(themes), max_cols), "", dtype=object)
+        for i, theme in enumerate(themes):
+            for j, concept in enumerate(HOT_CONCEPTS[theme]):
+                row = h[h["concept"] == concept]
+                if row.empty:
+                    continue
+                r = row.iloc[0]
+                z[i, j] = r["heat"]
+                arrow = r["arrow"] if r["arrow"] != "n/a" else ""
+                text[i, j] = f"{concept}<br>{r['heat']:.0f} {arrow}"
+                hover[i, j] = (
+                    f"{concept}<br>heat={r['heat']:.1f}<br>"
+                    f"昨日={r['prev_heat']:.1f} Δ={r['delta']:+.2f}<br>"
+                    f"色带={r['band']}<br>n={r['n_stocks']}"
+                )
+
+        fig = go.Figure(go.Heatmap(
+            z=z,
+            text=text,
+            texttemplate="%{text}",
+            hoverinfo="text",
+            hovertext=hover,
+            x=[f"col{i+1}" for i in range(max_cols)],
+            y=themes,
+            colorscale=[
+                [0.00, "#0f7d4a"],   # 深绿
+                [0.35, "#52c47a"],   # 绿
+                [0.45, "#a8e0b5"],   # 亮绿
+                [0.50, "#fff3b0"],   # 黄
+                [0.55, "#ffd9a0"],   # 浅红
+                [0.65, "#ff9b6c"],   # 红
+                [0.75, "#e8593b"],   # 深红
+                [0.90, "#9b30b3"],   # 紫红
+                [1.00, "#5e0066"],
+            ],
+            zmin=0, zmax=100,
+            showscale=True,
+            colorbar=dict(title="heat"),
+        ))
         fig.update_layout(
-            height=620,
-            xaxis=dict(title="RS-Ratio (相对强度)", range=[-5, 5], zeroline=False),
-            yaxis=dict(title="RS-Momentum (强度变化率)", range=[-5, 5], zeroline=False),
-            margin=dict(l=40, r=20, t=30, b=40),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.5, xanchor="center"),
+            height=70 * len(themes) + 100,
+            margin=dict(l=80, r=20, t=20, b=20),
+            xaxis=dict(showticklabels=False, showgrid=False),
+            yaxis=dict(autorange="reversed"),
         )
         st.plotly_chart(fig, width="stretch")
 
-        with st.expander("RRG 全表 (按象限分组)"):
-            show = view[["theme", "concept", "rs_ratio", "rs_momentum", "quadrant"]] \
-                    .sort_values(["quadrant", "rs_ratio"], ascending=[True, False])
-            st.dataframe(show, width="stretch", hide_index=True)
+        with st.expander("热力图全表（按 heat 降序）"):
+            cols = ["theme", "concept", "heat", "delta", "arrow", "band", "n_stocks"]
+            st.dataframe(h[cols].sort_values("heat", ascending=False),
+                         width="stretch", hide_index=True)
 
-        st.caption(
-            "**RS-Ratio** = (板块/沪深300) 价格比的 60 日滚动 Z-score。"
-            "**RS-Momentum** = RS-Ratio 5 日变化值的 60 日滚动 Z-score。"
-            "**轨迹** 显示最近 5 个交易日的位置变化（灰线 = 较早，端点 = 今天）。"
-            "通常路径：转强 → 领涨 → 转弱 → 落后 → 转强。"
+
+    # -------- Tab 3: Top-K migration ---------
+    with tabs[3]:
+        st.subheader("板块 Top-K N日涨幅排名 + 迁移")
+
+        col_a, col_b = st.columns([1, 4])
+        n_days = col_a.selectbox("N 日窗口", [1, 3, 5, 10, 20], index=2, key="topk_n_days")
+        k = col_a.selectbox("Top K", [3, 5, 7, 10], index=2, key="topk_k")
+
+        sec_panel = _sector_panel()
+        rets = n_day_return(sec_panel, n_days)
+        last = rets.iloc[-1].dropna().sort_values(ascending=False).head(k)
+
+        top_df = pd.DataFrame({
+            "rank": range(1, len(last) + 1),
+            "concept": last.index,
+            f"{n_days}日涨幅(%)": last.values.round(2),
+        })
+
+        col_b.markdown(f"#### 今日 Top {k} (按 {n_days} 日涨幅)")
+        col_b.dataframe(top_df, width="stretch", hide_index=True)
+
+        st.markdown("#### 迁移（今日 ∪ 昨日 Top-K）")
+        mig = latest_topk_migration(rets, k=k)
+        if not mig.empty:
+            tag_color = {
+                "连续": "background-color: #f5f5f5; color: #595959",
+                "新晋": "background-color: #d9f7be; color: #237804",
+                "回归": "background-color: #e6f4ff; color: #003a8c",
+                "掉出": "background-color: #fff1f0; color: #cf1322",
+            }
+            sty = mig.style.applymap(
+                lambda v: tag_color.get(v, ""), subset=["tag"]
+            ).format({"ret_pct_today": "{:.2f}"})
+            st.dataframe(sty, width="stretch", hide_index=True)
+
+
+    # -------- Tab 4: Crowding (容量抱团) ---------
+    with tabs[4]:
+        st.markdown(
+            section_header("容量抱团", "Capital concentration in leading themes"),
+            unsafe_allow_html=True,
         )
 
-
-# -------- Tab 6: Cycle detail ---------
-with tabs[6]:
-    st.subheader("板块周期详情 — SC30/SC3/SC60 + heat + 5/20日涨幅")
-
-    cyc = _cycle_detail()
-
-    col_a, col_b, col_c = st.columns(3)
-    sel_theme = col_a.multiselect(
-        "主题筛选",
-        sorted(cyc["theme"].dropna().unique()),
-        key="cycle_theme_filter",
-    )
-    sel_strength = col_b.multiselect(
-        "强度",
-        ["偏热", "强势", "中性", "冰点", "n/a"],
-        key="cycle_strength_filter",
-    )
-    sel_phase = col_c.multiselect(
-        "周期阶段",
-        ["高潮", "高位回调", "强势", "抱团", "酝酿反弹", "酝酿", "底部反弹", "冰点", "n/a"],
-        key="cycle_phase_filter",
-    )
-
-    view = cyc.copy()
-    if sel_theme:
-        view = view[view["theme"].isin(sel_theme)]
-    if sel_strength:
-        view = view[view["strength"].isin(sel_strength)]
-    if sel_phase:
-        view = view[view["phase"].isin(sel_phase)]
-
-    show_cols = ["theme", "concept", "n_stocks", "SC30", "SC3", "SC60",
-                 "heat", "ret_5d", "ret_20d", "strength", "phase"]
-
-    strength_color = {
-        "偏热":  "background-color: #ffd9a0; color: #cf1322",
-        "强势":  "background-color: #fff3b0; color: #ad6800",
-        "中性":  "background-color: #f5f5f5; color: #595959",
-        "冰点":  "background-color: #d6e7ff; color: #003a8c",
-    }
-    phase_color = {
-        "高潮":   "background-color: #ffb3a7; color: #780600",
-        "高位回调": "background-color: #ffe1a8; color: #874d00",
-        "强势":   "background-color: #fff3b0; color: #ad6800",
-        "抱团":   "background-color: #e8f7d6; color: #237804",
-        "酝酿反弹": "background-color: #d6e7ff; color: #003a8c",
-        "酝酿":   "background-color: #f5f5f5; color: #595959",
-        "底部反弹": "background-color: #cdeefd; color: #003a8c",
-        "冰点":   "background-color: #d6e7ff; color: #003a8c",
-    }
-    sty = view[show_cols].style \
-        .applymap(lambda v: strength_color.get(v, ""), subset=["strength"]) \
-        .applymap(lambda v: phase_color.get(v, ""), subset=["phase"]) \
-        .background_gradient(subset=["SC30", "SC3", "SC60", "heat"],
-                              cmap="RdYlGn_r", vmin=0, vmax=100) \
-        .background_gradient(subset=["ret_5d", "ret_20d"], cmap="RdYlGn", vmin=-15, vmax=15) \
-        .format({"SC30": "{:.1f}", "SC3": "{:.1f}", "SC60": "{:.1f}",
-                 "heat": "{:.1f}", "ret_5d": "{:.2f}", "ret_20d": "{:.2f}"})
-    st.dataframe(sty, width="stretch", hide_index=True, height=600)
-
-    # Pie / distribution
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**强度分布**")
-        sd = view["strength"].value_counts()
-        st.bar_chart(sd)
-    with col2:
-        st.markdown("**周期阶段分布**")
-        pd_ = view["phase"].value_counts()
-        st.bar_chart(pd_)
-
-
-# -------- Tab 7: Heat history ---------
-with tabs[7]:
-    st.subheader("板块热度时序 — RSI(14) + EMA(5)")
-
-    hh = _heatmap_history()
-    if hh.empty:
-        st.info("无可用历史。")
-    else:
-        default_pick = (
-            _heatmap_latest().dropna(subset=["heat"]).head(6)["concept"].tolist()
-        )
-        picked = st.multiselect(
-            "选择概念",
-            options=list(hh.columns),
-            default=default_pick,
-            key="heat_history_concepts",
-        )
-        lookback = st.slider("回看天数", 30, 750, 250, step=30, key="heat_history_lookback")
-
-        if picked:
-            view = hh[picked].tail(lookback).copy()
-            fig = px.line(
-                view, x=view.index, y=view.columns,
-                labels={"value": "heat", "variable": "concept"},
+        cr = _crowding()
+        if cr.empty:
+            st.info("无可用容量抱团数据。")
+        else:
+            mc = market_crowding_state(cr)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.markdown(
+                kpi_card("Top 主题", f"{mc.get('top_theme', '—')}",
+                         delta=f"占全市 {mc.get('top_theme_share_pct', 0):.2f}%",
+                         value_size="sm", accent=True),
+                unsafe_allow_html=True,
             )
-            fig.add_hline(y=85, line_dash="dot", line_color="purple",
-                          annotation_text="紫红 (>=85)")
-            fig.add_hline(y=75, line_dash="dot", line_color="red",
-                          annotation_text="深红 (75-85)")
-            fig.add_hline(y=50, line_dash="dot", line_color="grey")
-            fig.add_hline(y=35, line_dash="dot", line_color="green",
-                          annotation_text="绿 (<35)")
-            fig.update_layout(height=520, hovermode="x unified",
-                              margin=dict(l=20, r=20, t=20, b=20))
+            m2.markdown(
+                kpi_card("Top2 浓度", f"{mc.get('top2_concentration_pct', 0):.2f}%",
+                         delta="Top1 + Top2 主题占全市"),
+                unsafe_allow_html=True,
+            )
+            decay_val = mc.get("top_theme_decay_pct")
+            m3.markdown(
+                kpi_card("Top 主题衰减",
+                         f"{decay_val:.1f}%" if decay_val is not None else "—",
+                         delta="从 60 日峰值的回落幅度"),
+                unsafe_allow_html=True,
+            )
+            abs_c = mc.get("abs_crowding", False)
+            abs_pill = (pill("触发", kind="danger", size="lg") if abs_c
+                        else pill("未触发", kind="success", size="lg"))
+            m4.markdown(
+                kpi_card("绝对抱团", abs_pill,
+                         delta=f"阈值 {mc.get('abs_share_threshold_pct', 8):.0f}%"),
+                unsafe_allow_html=True,
+            )
+
+            st.markdown(
+                section_header("概念级容量明细", "Sorted by market share, descending"),
+                unsafe_allow_html=True,
+            )
+
+            # Filters
+            col_a, col_b = st.columns([1, 4])
+            only_top7 = col_a.checkbox("只看 in Top7", value=False, key="crowding_only_top7")
+            min_share = col_a.number_input("最小 share (%)", value=0.5, step=0.5, key="crowding_min_share")
+
+            view = cr.copy()
+            if only_top7:
+                view = view[view["days_in_top7"] > 0]
+            view = view[view["share_pct"] >= min_share]
+
+            show_cols = [
+                "theme", "concept", "top_n_amount_yi", "share_pct",
+                "strength_pct", "decay_pct", "days_in_top7",
+            ]
+            view = view[show_cols].rename(columns={
+                "top_n_amount_yi": "top5成交额(亿)",
+                "share_pct": "占全市(%)",
+                "strength_pct": "60日分位(%)",
+                "decay_pct": "衰减(%)",
+                "days_in_top7": "Top7连续天",
+            })
+            sty = view.style \
+                .background_gradient(subset=["占全市(%)"], cmap="Reds", vmin=0, vmax=8) \
+                .background_gradient(subset=["60日分位(%)"], cmap="Reds", vmin=0, vmax=100) \
+                .background_gradient(subset=["衰减(%)"], cmap="Blues", vmin=0, vmax=40) \
+                .format({"top5成交额(亿)": "{:.0f}", "占全市(%)": "{:.2f}",
+                         "60日分位(%)": "{:.0f}", "衰减(%)": "{:.1f}"})
+            st.dataframe(sty, width="stretch", hide_index=True, height=520)
+
+            st.caption(
+                "**share_pct** = 主题 top5 成交额 / 全市场成交额 × 100。"
+                "**60日分位** = share_pct 在过去 60 日的滚动百分位（接近 100 = 历史高位）。"
+                "**衰减** = (60日峰值 − 当前 share) / 峰值 × 100。"
+                "**Top7连续天** = 在 5 日涨幅 Top7 中连续在榜天数。"
+            )
+
+
+    # -------- Tab 5: RRG rotation ---------
+    with tabs[5]:
+        st.markdown(
+            section_header("RRG 相对轮动", "Sector momentum vs CSI 300"),
+            unsafe_allow_html=True,
+        )
+
+        rdf = _rrg()
+        if rdf.empty:
+            st.info("无可用 RRG 数据。")
+        else:
+            # Quadrant counts
+            qc = rdf["quadrant"].value_counts()
+            q1, q2, q3, q4 = st.columns(4)
+            q1.markdown(kpi_card("领涨 Leading",  str(qc.get("领涨", 0)),
+                                 delta="RS+ · MOM+", accent=True), unsafe_allow_html=True)
+            q2.markdown(kpi_card("转强 Improving", str(qc.get("转强", 0)),
+                                 delta="RS- · MOM+"), unsafe_allow_html=True)
+            q3.markdown(kpi_card("转弱 Weakening", str(qc.get("转弱", 0)),
+                                 delta="RS+ · MOM-"), unsafe_allow_html=True)
+            q4.markdown(kpi_card("落后 Lagging",   str(qc.get("落后", 0)),
+                                 delta="RS- · MOM-"), unsafe_allow_html=True)
+
+            # Theme filter
+            col_a, col_b = st.columns([1, 4])
+            sel_theme = col_a.multiselect(
+                "主题筛选",
+                sorted(rdf["theme"].dropna().unique()),
+                key="rrg_theme_filter",
+            )
+            show_trail = col_a.checkbox("显示轨迹", value=True, key="rrg_show_trail")
+            view = rdf if not sel_theme else rdf[rdf["theme"].isin(sel_theme)]
+            view = view.dropna(subset=["rs_ratio", "rs_momentum"])
+
+            # Scatter plot
+            fig = go.Figure()
+
+            # Quadrant background shading
+            fig.add_shape(type="rect", x0=0, y0=0, x1=5, y1=5,
+                          fillcolor="rgba(82, 196, 122, 0.10)", line_width=0)  # 领涨
+            fig.add_shape(type="rect", x0=-5, y0=0, x1=0, y1=5,
+                          fillcolor="rgba(64, 169, 255, 0.10)", line_width=0)  # 转强
+            fig.add_shape(type="rect", x0=0, y0=-5, x1=5, y1=0,
+                          fillcolor="rgba(255, 215, 100, 0.10)", line_width=0)  # 转弱
+            fig.add_shape(type="rect", x0=-5, y0=-5, x1=0, y1=0,
+                          fillcolor="rgba(255, 130, 130, 0.10)", line_width=0)  # 落后
+
+            fig.add_hline(y=0, line_dash="dot", line_color="#999")
+            fig.add_vline(x=0, line_dash="dot", line_color="#999")
+
+            # Quadrant labels (corner annotations)
+            fig.add_annotation(x=3.5, y=3.5, text="<b>领涨 Leading</b>",
+                                showarrow=False, font=dict(color="#237804", size=14))
+            fig.add_annotation(x=-3.5, y=3.5, text="<b>转强 Improving</b>",
+                                showarrow=False, font=dict(color="#003a8c", size=14))
+            fig.add_annotation(x=3.5, y=-3.5, text="<b>转弱 Weakening</b>",
+                                showarrow=False, font=dict(color="#874d00", size=14))
+            fig.add_annotation(x=-3.5, y=-3.5, text="<b>落后 Lagging</b>",
+                                showarrow=False, font=dict(color="#cf1322", size=14))
+
+            # Plot trails first (so points are on top)
+            if show_trail:
+                for _, row in view.iterrows():
+                    tr = [v for v in row["trail_rs"] if v is not None]
+                    tm = [v for v in row["trail_mom"] if v is not None]
+                    if len(tr) < 2:
+                        continue
+                    fig.add_trace(go.Scatter(
+                        x=tr, y=tm, mode="lines",
+                        line=dict(color="rgba(150,150,150,0.35)", width=1),
+                        hoverinfo="skip", showlegend=False,
+                    ))
+
+            # Plot current positions, color by quadrant
+            qcolor = {"领涨": "#52c47a", "转强": "#40a9ff",
+                      "转弱": "#fa8c16", "落后": "#cf1322"}
+            for q, color in qcolor.items():
+                sub = view[view["quadrant"] == q]
+                if sub.empty:
+                    continue
+                fig.add_trace(go.Scatter(
+                    x=sub["rs_ratio"], y=sub["rs_momentum"],
+                    mode="markers+text",
+                    marker=dict(color=color, size=11, line=dict(color="white", width=1)),
+                    text=sub["concept"],
+                    textposition="top center",
+                    textfont=dict(size=10),
+                    name=q,
+                    hovertemplate="<b>%{text}</b><br>RS=%{x:.2f} MOM=%{y:.2f}<extra></extra>",
+                ))
+
+            fig.update_layout(
+                height=620,
+                xaxis=dict(title="RS-Ratio (相对强度)", range=[-5, 5], zeroline=False),
+                yaxis=dict(title="RS-Momentum (强度变化率)", range=[-5, 5], zeroline=False),
+                margin=dict(l=40, r=20, t=30, b=40),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.5, xanchor="center"),
+            )
             st.plotly_chart(fig, width="stretch")
 
+            with st.expander("RRG 全表 (按象限分组)"):
+                show = view[["theme", "concept", "rs_ratio", "rs_momentum", "quadrant"]] \
+                        .sort_values(["quadrant", "rs_ratio"], ascending=[True, False])
+                st.dataframe(show, width="stretch", hide_index=True)
 
-# -------- Tab 8: Stock tags ---------
-with tabs[8]:
+            st.caption(
+                "**RS-Ratio** = (板块/沪深300) 价格比的 60 日滚动 Z-score。"
+                "**RS-Momentum** = RS-Ratio 5 日变化值的 60 日滚动 Z-score。"
+                "**轨迹** 显示最近 5 个交易日的位置变化（灰线 = 较早，端点 = 今天）。"
+                "通常路径：转强 → 领涨 → 转弱 → 落后 → 转强。"
+            )
+
+
+    # -------- Tab 6: Cycle detail ---------
+    with tabs[6]:
+        st.subheader("板块周期详情 — SC30/SC3/SC60 + heat + 5/20日涨幅")
+
+        cyc = _cycle_detail()
+
+        col_a, col_b, col_c = st.columns(3)
+        sel_theme = col_a.multiselect(
+            "主题筛选",
+            sorted(cyc["theme"].dropna().unique()),
+            key="cycle_theme_filter",
+        )
+        sel_strength = col_b.multiselect(
+            "强度",
+            ["偏热", "强势", "中性", "冰点", "n/a"],
+            key="cycle_strength_filter",
+        )
+        sel_phase = col_c.multiselect(
+            "周期阶段",
+            ["高潮", "高位回调", "强势", "抱团", "酝酿反弹", "酝酿", "底部反弹", "冰点", "n/a"],
+            key="cycle_phase_filter",
+        )
+
+        view = cyc.copy()
+        if sel_theme:
+            view = view[view["theme"].isin(sel_theme)]
+        if sel_strength:
+            view = view[view["strength"].isin(sel_strength)]
+        if sel_phase:
+            view = view[view["phase"].isin(sel_phase)]
+
+        show_cols = ["theme", "concept", "n_stocks", "SC30", "SC3", "SC60",
+                     "heat", "ret_5d", "ret_20d", "strength", "phase"]
+
+        strength_color = {
+            "偏热":  "background-color: #ffd9a0; color: #cf1322",
+            "强势":  "background-color: #fff3b0; color: #ad6800",
+            "中性":  "background-color: #f5f5f5; color: #595959",
+            "冰点":  "background-color: #d6e7ff; color: #003a8c",
+        }
+        phase_color = {
+            "高潮":   "background-color: #ffb3a7; color: #780600",
+            "高位回调": "background-color: #ffe1a8; color: #874d00",
+            "强势":   "background-color: #fff3b0; color: #ad6800",
+            "抱团":   "background-color: #e8f7d6; color: #237804",
+            "酝酿反弹": "background-color: #d6e7ff; color: #003a8c",
+            "酝酿":   "background-color: #f5f5f5; color: #595959",
+            "底部反弹": "background-color: #cdeefd; color: #003a8c",
+            "冰点":   "background-color: #d6e7ff; color: #003a8c",
+        }
+        sty = view[show_cols].style \
+            .applymap(lambda v: strength_color.get(v, ""), subset=["strength"]) \
+            .applymap(lambda v: phase_color.get(v, ""), subset=["phase"]) \
+            .background_gradient(subset=["SC30", "SC3", "SC60", "heat"],
+                                  cmap="RdYlGn_r", vmin=0, vmax=100) \
+            .background_gradient(subset=["ret_5d", "ret_20d"], cmap="RdYlGn", vmin=-15, vmax=15) \
+            .format({"SC30": "{:.1f}", "SC3": "{:.1f}", "SC60": "{:.1f}",
+                     "heat": "{:.1f}", "ret_5d": "{:.2f}", "ret_20d": "{:.2f}"})
+        st.dataframe(sty, width="stretch", hide_index=True, height=600)
+
+        # Pie / distribution
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**强度分布**")
+            sd = view["strength"].value_counts()
+            st.bar_chart(sd)
+        with col2:
+            st.markdown("**周期阶段分布**")
+            pd_ = view["phase"].value_counts()
+            st.bar_chart(pd_)
+
+
+    # -------- Tab 7: Heat history ---------
+    with tabs[7]:
+        st.subheader("板块热度时序 — RSI(14) + EMA(5)")
+
+        hh = _heatmap_history()
+        if hh.empty:
+            st.info("无可用历史。")
+        else:
+            default_pick = (
+                _heatmap_latest().dropna(subset=["heat"]).head(6)["concept"].tolist()
+            )
+            picked = st.multiselect(
+                "选择概念",
+                options=list(hh.columns),
+                default=default_pick,
+                key="heat_history_concepts",
+            )
+            lookback = st.slider("回看天数", 30, 750, 250, step=30, key="heat_history_lookback")
+
+            if picked:
+                view = hh[picked].tail(lookback).copy()
+                fig = px.line(
+                    view, x=view.index, y=view.columns,
+                    labels={"value": "heat", "variable": "concept"},
+                )
+                fig.add_hline(y=85, line_dash="dot", line_color="purple",
+                              annotation_text="紫红 (>=85)")
+                fig.add_hline(y=75, line_dash="dot", line_color="red",
+                              annotation_text="深红 (75-85)")
+                fig.add_hline(y=50, line_dash="dot", line_color="grey")
+                fig.add_hline(y=35, line_dash="dot", line_color="green",
+                              annotation_text="绿 (<35)")
+                fig.update_layout(height=520, hovermode="x unified",
+                                  margin=dict(l=20, r=20, t=20, b=20))
+                st.plotly_chart(fig, width="stretch")
+
+
+# -------- Main Tab 2: 个股 — Stock tags ---------
+with main_tabs[1]:
     st.subheader("个股标签 — 量化交易状态")
 
     col_input, _ = st.columns([1, 3])

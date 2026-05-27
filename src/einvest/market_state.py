@@ -94,6 +94,145 @@ def _pct_strong_to_config(pct_strong: float) -> float:
     return 15.0
 
 
+def _cci84_to_position(cci84: float) -> float:
+    """Map CCI84 to a 0-100 position score (per 复盘 PDF §7 弹性仓位 spirit).
+
+    >150        严重超买 → 减仓 → 20
+    100..150    强势但偏热 → 50
+    50..100     健康偏多 → 80
+    0..50       中性偏多 → 70
+    -100..0     偏空 → 45
+    <-100       超卖 → 35 (有左侧买点但仓位保守)
+    """
+    if pd.isna(cci84):
+        return 50.0
+    if cci84 > 150:
+        return 20.0
+    if cci84 > 100:
+        return 50.0
+    if cci84 > 50:
+        return 80.0
+    if cci84 > 0:
+        return 70.0
+    if cci84 > -100:
+        return 45.0
+    return 35.0
+
+
+# ---------------------------------------------------------------------------
+# 6-phase market positioning (上行早/中/晚 + 下行早/中/晚)
+# ---------------------------------------------------------------------------
+
+PHASE_6_POSITION_HINT = {
+    "上行早期": (40, 60),
+    "上行中期": (60, 80),
+    "上行晚期": (40, 60),
+    "下行早期": (20, 40),
+    "下行中期": (10, 25),
+    "下行晚期": (0, 15),
+    "震荡":     (30, 50),
+    "n/a":      (30, 50),
+}
+
+PHASE_6_STRATEGY = {
+    "上行早期": "左侧布局主线，关注 SC30+SC3 共振向上的板块",
+    "上行中期": "趋势加仓，主线持有 + 高低切",
+    "上行晚期": "警惕派发，逐步止盈减仓",
+    "下行早期": "仅持核心，新仓回避",
+    "下行中期": "缩容空仓，等待流动性恢复",
+    "下行晚期": "全面防守，等待右侧买点",
+    "震荡":     "持股观望，不大开大合",
+    "n/a":      "数据不足",
+}
+
+
+def market_phase_6(*, market_sc30: float, market_sc30_5d_mom: float,
+                    cci84: float, breadth_ratio: float,
+                    liquidity_score: float) -> str:
+    """6-phase market positioning per redesigned framework.
+
+    Combines market-wide SC30 (中期), 5 日 mom (方向), CCI84 (顶部/底部),
+    breadth_ratio (当日广度), liquidity_score (流动性).
+    """
+    if pd.isna(market_sc30):
+        return "n/a"
+    if market_sc30 < 25 and breadth_ratio < 0.5:
+        return "下行晚期"
+    if market_sc30 < 40 and (pd.isna(liquidity_score) or liquidity_score < 45):
+        return "下行中期"
+    # 上行晚期：SC30 顶部 OR CCI 超买 + 广度边际衰减
+    if market_sc30 >= 75 or (not pd.isna(cci84) and cci84 > 120 and breadth_ratio < 1.0):
+        return "上行晚期"
+    # 下行早期：SC30 走弱且广度翻空
+    if market_sc30 < 55 and breadth_ratio < 1.0:
+        return "下行早期"
+    # 上行中期：SC30 50-75 且方向向上
+    if 50 <= market_sc30 < 75 and market_sc30_5d_mom > 0:
+        return "上行中期"
+    # 上行早期：SC30 仍低但开始上行 + 广度转好
+    if market_sc30 < 50 and market_sc30_5d_mom > 0 and breadth_ratio > 1.0:
+        return "上行早期"
+    return "震荡"
+
+
+# ---------------------------------------------------------------------------
+# Suggested position (weighted MA / MST / CCI per PDF §7 base + flex spirit)
+# ---------------------------------------------------------------------------
+
+def suggested_position(*, ma_score: float, mst_avg: float,
+                        cci84: float) -> dict[str, Any]:
+    """Single weighted position score: 0.5 × MA + 0.3 × MST + 0.2 × CCI.
+
+    Per AI复盘使用说明 §7:
+      - 基础仓位 (MA matrix) is the trend anchor
+      - 弹性仓位 (MST + CCI + 流动性) modifies it ±30
+    Collapsed into one number for the simplified dashboard.
+    """
+    cci_pos = _cci84_to_position(cci84)
+    score = 0.5 * ma_score + 0.3 * mst_avg + 0.2 * cci_pos
+    return {
+        "score": round(score, 1),
+        "ma_score": round(ma_score, 1),
+        "mst_score": round(mst_avg, 1),
+        "cci_score": round(cci_pos, 1),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Suggested sectors (SC30 + SC3 共振向上)
+# ---------------------------------------------------------------------------
+
+def suggested_sectors(cycle_detail: pd.DataFrame, *, top_n: int = 5,
+                      min_sc30: float = 50, min_sc3: float = 50,
+                      require_positive_5d: bool = True) -> list[dict[str, Any]]:
+    """Concepts where SC30 and SC3 both 偏强 (中期与短期共振向上).
+
+    Per AI复盘使用说明 §2: SC30 是战略，SC3 是战术，共振 = 双信号确认。
+    """
+    if cycle_detail is None or cycle_detail.empty:
+        return []
+    df = cycle_detail.dropna(subset=["SC30", "SC3"])
+    mask = (df["SC30"] >= min_sc30) & (df["SC3"] >= min_sc3)
+    if require_positive_5d and "ret_5d" in df.columns:
+        mask &= df["ret_5d"] > 0
+    df = df[mask].copy()
+    if df.empty:
+        return []
+    df["resonance"] = (df["SC30"] + df["SC3"]) / 2
+    df = df.sort_values("resonance", ascending=False).head(top_n)
+    return [
+        {
+            "theme": r["theme"],
+            "concept": r["concept"],
+            "sc30": r["SC30"],
+            "sc3":  r["SC3"],
+            "ret_5d": r.get("ret_5d"),
+            "phase": r.get("phase"),
+        }
+        for _, r in df.iterrows()
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Position components
 # ---------------------------------------------------------------------------
@@ -259,6 +398,11 @@ class MarketStateSnapshot:
     market_state: str
     risk_light: str
     cycle_phase: str
+    phase_6: str
+    phase_6_strategy: str
+    phase_6_position_hint: tuple[int, int]
+    suggested_position: dict[str, Any]
+    suggested_sectors: list[dict[str, Any]]
     position_base: dict[str, Any]
     position_flex: dict[str, Any]
     position_config: dict[str, Any]
@@ -312,11 +456,35 @@ def market_state_snapshot(
 
     # Market-wide SC30/SC3 from 万得全A — comparable to original framework's SC30中期
     full_a_close = full_a.set_index("date")["close"]
-    market_sc30 = float(rsv(full_a_close, 30).iloc[-1])
+    market_sc30_series = rsv(full_a_close, 30)
+    market_sc30 = float(market_sc30_series.iloc[-1])
     market_sc3 = float(rsv(full_a_close, 3).iloc[-1])
+    market_sc30_5d_mom = (
+        float(market_sc30 - market_sc30_series.iloc[-6])
+        if len(market_sc30_series) > 5 and not pd.isna(market_sc30_series.iloc[-6])
+        else 0.0
+    )
 
     # Keep top_sc30 (per-concept max) for reference only
     top_sc30 = float(cyc["SC30"].max()) if not cyc.empty else float("nan")
+
+    # 6-phase positioning + weighted suggested position + sector resonance picks
+    liq_score_val = pf.get("liquidity_score")
+    liq_score_num = float(liq_score_val) if liq_score_val is not None else float("nan")
+    phase_6 = market_phase_6(
+        market_sc30=market_sc30,
+        market_sc30_5d_mom=market_sc30_5d_mom,
+        cci84=cci84,
+        breadth_ratio=breadth_ratio,
+        liquidity_score=liq_score_num,
+    )
+    mst_avg = float(pf.get("mst_avg", (pf["mst_5"] + pf["mst_13"] + pf["mst_50"]) / 3))
+    sug_pos = suggested_position(
+        ma_score=pb["score"],
+        mst_avg=mst_avg,
+        cci84=cci84,
+    )
+    sug_sectors = suggested_sectors(cyc, top_n=5)
 
     return MarketStateSnapshot(
         date=last_date,
@@ -335,6 +503,11 @@ def market_state_snapshot(
             liq_band=liq_b,
             breadth_ratio=breadth_ratio,
         ),
+        phase_6=phase_6,
+        phase_6_strategy=PHASE_6_STRATEGY.get(phase_6, ""),
+        phase_6_position_hint=PHASE_6_POSITION_HINT.get(phase_6, (30, 50)),
+        suggested_position=sug_pos,
+        suggested_sectors=sug_sectors,
         position_base=pb,
         position_flex=pf,
         position_config=pc,
@@ -344,6 +517,7 @@ def market_state_snapshot(
             "flat_count": int(udc["flat_count"].iloc[-1]),
             "breadth_ratio": round(breadth_ratio, 2),
             "market_sc30": round(market_sc30, 1) if not pd.isna(market_sc30) else None,
+            "market_sc30_5d_mom": round(market_sc30_5d_mom, 1),
             "market_sc3": round(market_sc3, 1) if not pd.isna(market_sc3) else None,
             "top_sc30": round(top_sc30, 1) if not pd.isna(top_sc30) else None,
         },
