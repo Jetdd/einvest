@@ -52,6 +52,7 @@ from einvest.io import (
 )
 from einvest.crowding import crowding_latest_per_concept, market_crowding_state
 from einvest.market_state import market_state_snapshot
+from einvest.risk_score import risk_score_snapshot, risk_light_from_stats
 from einvest.rrg import rrg_rotation_table, stock_rrg
 from einvest.rankings import (
     latest_topk_migration,
@@ -159,6 +160,11 @@ def _crowding() -> pd.DataFrame:
 @st.cache_data(show_spinner="计算 RRG 象限迁移 ...")
 def _rrg_rotation(lookback: int) -> pd.DataFrame:
     return rrg_rotation_table(lookback=lookback)
+
+
+@st.cache_data(show_spinner="计算历史风险评分 ...")
+def _risk_score(top_k: int):
+    return risk_score_snapshot(top_k=top_k)
 
 
 @st.cache_data(show_spinner="构建标签引擎 ...")
@@ -467,6 +473,81 @@ with main_tabs[0]:
                 unsafe_allow_html=True,
             )
 
+            # ---------- 历史风险评分 ----------
+            st.markdown(
+                section_header("历史风险评分", "KNN over historical feature snapshots"),
+                unsafe_allow_html=True,
+            )
+            top_k = st.slider("Top-K 相似历史日", min_value=10, max_value=80,
+                              value=30, step=5, key="risk_topk")
+            rs = _risk_score(int(top_k))
+            if rs is None:
+                st.info("无历史特征可计算风险评分。")
+            else:
+                light = risk_light_from_stats(rs.horizons)
+                light_kind = {"红": "danger", "黄": "warning", "绿": "success", "n/a": "muted"}.get(light, "muted")
+
+                r1, r2, r3, r4 = st.columns(4)
+                r1.markdown(
+                    kpi_card(
+                        "风险灯",
+                        pill(light, kind=light_kind, size="lg"),
+                        delta=f"基于 {rs.n_similar} 个最相似历史日",
+                    ),
+                    unsafe_allow_html=True,
+                )
+                for col, h in zip((r2, r3, r4), ("1d", "5d", "20d")):
+                    s = rs.horizons[h]
+                    win = s.get("win_rate", float("nan"))
+                    mean = s.get("mean", float("nan"))
+                    win_kind = ("up" if not pd.isna(win) and win >= 55
+                                else "down" if not pd.isna(win) and win < 45
+                                else "muted")
+                    col.markdown(
+                        kpi_card(
+                            f"T+{h} 胜率",
+                            f"{win:.1f}%" if not pd.isna(win) else "—",
+                            delta=(f"均值 {mean:+.2f}%  ·  "
+                                    f"中位 {s.get('median', float('nan')):+.2f}%"
+                                    if not pd.isna(mean) else "n/a"),
+                            delta_kind=win_kind,
+                            accent=(h == "5d"),
+                        ),
+                        unsafe_allow_html=True,
+                    )
+
+                with st.expander(f"Top 15 最相似历史日（含未来 T+1/T+5/T+20 收益）"):
+                    sim_df = pd.DataFrame(rs.similar_days)
+                    sim_df = sim_df.rename(columns={
+                        "distance": "距离",
+                        "market_sc30": "SC30",
+                        "cci84": "CCI84",
+                        "MST_5": "MST5",
+                        "breadth_ratio": "breadth",
+                        "liquidity_score": "流动性",
+                        "ret_1d": "T+1 (%)",
+                        "ret_5d": "T+5 (%)",
+                        "ret_20d": "T+20 (%)",
+                    })
+                    sty = sim_df.style \
+                        .background_gradient(subset=["T+1 (%)", "T+5 (%)", "T+20 (%)"],
+                                              cmap="RdYlGn", vmin=-8, vmax=8) \
+                        .background_gradient(subset=["距离"], cmap="Blues", vmin=0, vmax=3) \
+                        .format({"距离": "{:.2f}", "SC30": "{:.0f}", "CCI84": "{:.0f}",
+                                 "MST5": "{:.0f}", "breadth": "{:.2f}",
+                                 "流动性": "{:.0f}",
+                                 "T+1 (%)": "{:+.2f}",
+                                 "T+5 (%)": "{:+.2f}",
+                                 "T+20 (%)": "{:+.2f}"})
+                    st.dataframe(sty, width="stretch", hide_index=True, height=460)
+
+                st.caption(
+                    "**方法**: 把今日 8 维特征（market_sc30 + 5日Mom + MST5/13/50 + "
+                    "CCI84 + breadth + 流动性）做 z-score 标准化，按欧氏距离在历史日中找最相似的 Top-K。"
+                    "**胜率** = 这 K 个历史日 T+N 全A 涨幅 > 0 的比例。"
+                    "**剔除** 最近 30 个交易日，避免与当前窗口重叠。"
+                )
+
             st.markdown(
                 section_header("规则与口径", "Methodology"),
                 unsafe_allow_html=True,
@@ -482,8 +563,8 @@ with main_tabs[0]:
                 "  - 下行晚期：SC30 < 25 且 breadth < 0.5\n"
                 "- **建议仓位** = 0.5 × MA矩阵 + 0.3 × MST + 0.2 × CCI（PDF §7 基础+弹性融合）\n"
                 "- **建议板块** = SC30 ≥ 50 且 SC3 ≥ 50 且 5日涨幅 > 0（中期+短期共振向上）\n"
-                "\n"
-                "> ⚠️ 历史风险评分（T+1/T+5/T+20 胜率）将在 Step 3 加入。"
+                "- **风险灯**：T+5 胜率 < 40% 或 T+1 均值 < -0.5% → 🔴；"
+                "T+5 胜率 ≥ 60% 且 T+5 均值 > 0.5% → 🟢；其它 → 🟡"
             )
 
     # -------- Tab 1: CCI ---------
