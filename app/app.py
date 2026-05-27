@@ -302,21 +302,24 @@ if snap is not None:
         rows_html = ""
         for s in snap.suggested_sectors[:5]:
             ret5 = s.get("ret_5d")
-            ret5s = f" · {ret5:+.1f}%" if ret5 is not None and not pd.isna(ret5) else ""
+            ret5s = f"  {ret5:+.1f}%" if ret5 is not None and not pd.isna(ret5) else ""
             rows_html += (
                 f"<div style='display:flex;justify-content:space-between;align-items:center;"
-                f"padding:3px 0;border-bottom:1px solid #F1F5F9'>"
-                f"<div><b style='color:#0F172A;font-size:13.5px'>{s['concept']}</b>"
-                f"  <span style='color:#94A3B8;font-size:11.5px'>[{s['theme']}]</span></div>"
-                f"<div style='color:#52c47a;font-size:12px;font-weight:600'>"
+                f"padding:5px 0;border-bottom:1px solid var(--border)'>"
+                f"<div>"
+                f"<span style='color:#E8ECF1;font-size:12.5px;font-weight:600'>{s['concept']}</span>"
+                f"  <span style='color:#5F6877;font-size:10.5px;text-transform:uppercase;"
+                f"letter-spacing:0.06em'>{s['theme']}</span></div>"
+                f"<div style='color:#FF7A87;font-size:11.5px;font-weight:600;"
+                f"font-family:JetBrains Mono,monospace;font-variant-numeric:tabular-nums'>"
                 f"SC30 {s['sc30']:.0f} · SC3 {s['sc3']:.0f}{ret5s}</div>"
                 f"</div>"
             )
         body_html = f"<div style='margin-top:4px'>{rows_html}</div>"
     else:
         body_html = (
-            "<div style='color:#94A3B8;padding:18px 0;text-align:center;font-size:13px'>"
-            "暂无 SC30+SC3 共振向上板块</div>"
+            "<div style='color:#5F6877;padding:18px 0;text-align:center;font-size:12px'>"
+            "no SC30+SC3 resonance</div>"
         )
 
     h3.markdown(
@@ -332,7 +335,7 @@ if snap is not None:
 # Main Tabs — 市场 + 个股
 # ---------------------------------------------------------------------------
 
-main_tabs = st.tabs(["📊 市场", "👤 个股"])
+main_tabs = st.tabs(["市场", "个股"])
 
 with main_tabs[0]:
     # --- Market vitals strip ---
@@ -393,14 +396,14 @@ with main_tabs[0]:
     )
 
     tabs = st.tabs([
-        "📍 市场状态",
-        "📈 CCI",
-        "🔥 板块热力图",
-        "🏆 Top-K 排名迁移",
-        "💧 容量抱团",
-        "🌐 RRG 轮动",
-        "🌗 板块周期详情",
-        "📉 热度历史",
+        "状态",
+        "CCI",
+        "热力图",
+        "排名迁移",
+        "容量抱团",
+        "象限轮动",
+        "周期详情",
+        "热度历史",
     ])
 
     # -------- Sub Tab 0: Market state detail ---------
@@ -531,7 +534,7 @@ with main_tabs[0]:
                     })
                     sty = sim_df.style \
                         .background_gradient(subset=["T+1 (%)", "T+5 (%)", "T+20 (%)"],
-                                              cmap="RdYlGn", vmin=-8, vmax=8) \
+                                              cmap="RdYlGn_r", vmin=-8, vmax=8) \
                         .background_gradient(subset=["距离"], cmap="Blues", vmin=0, vmax=3) \
                         .format({"距离": "{:.2f}", "SC30": "{:.0f}", "CCI84": "{:.0f}",
                                  "MST5": "{:.0f}", "breadth": "{:.2f}",
@@ -563,8 +566,8 @@ with main_tabs[0]:
                 "  - 下行晚期：SC30 < 25 且 breadth < 0.5\n"
                 "- **建议仓位** = 0.5 × MA矩阵 + 0.3 × MST + 0.2 × CCI（PDF §7 基础+弹性融合）\n"
                 "- **建议板块** = SC30 ≥ 50 且 SC3 ≥ 50 且 5日涨幅 > 0（中期+短期共振向上）\n"
-                "- **风险灯**：T+5 胜率 < 40% 或 T+1 均值 < -0.5% → 🔴；"
-                "T+5 胜率 ≥ 60% 且 T+5 均值 > 0.5% → 🟢；其它 → 🟡"
+                "- **风险灯**：T+5 胜率 < 40% 或 T+1 均值 < -0.5% → 红；"
+                "T+5 胜率 ≥ 60% 且 T+5 均值 > 0.5% → 绿；其它 → 黄"
             )
 
     # -------- Tab 1: CCI ---------
@@ -590,10 +593,10 @@ with main_tabs[0]:
 
         def _color_state(v: str) -> str:
             return {
-                "超买": "background-color: #fde0e0; color: #c70000",
-                "偏多": "background-color: #fff7e0; color: #b88500",
-                "偏空": "background-color: #eaf2ff; color: #0050b3",
-                "超卖": "background-color: #e0f0ff; color: #003a8c",
+                "超买": "background-color: rgba(230,57,70,0.20); color: #FF7A87; font-weight: 600",
+                "偏多": "background-color: rgba(255,176,0,0.18); color: #FFC74D",
+                "偏空": "background-color: rgba(6,167,125,0.15); color: #3DD8AE",
+                "超卖": "background-color: rgba(6,167,125,0.22); color: #3DD8AE; font-weight: 600",
             }.get(v, "")
 
         sty = cci_df.style.applymap(_color_state, subset=["状态14", "状态84"]) \
@@ -657,7 +660,10 @@ with main_tabs[0]:
             height=70 * len(themes) + 100,
             margin=dict(l=80, r=20, t=20, b=20),
             xaxis=dict(showticklabels=False, showgrid=False),
-            yaxis=dict(autorange="reversed"),
+            yaxis=dict(autorange="reversed", color="#E8ECF1"),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#E8ECF1", family="Inter"),
         )
         st.plotly_chart(fig, width="stretch")
 
@@ -692,10 +698,10 @@ with main_tabs[0]:
         mig = latest_topk_migration(rets, k=k)
         if not mig.empty:
             tag_color = {
-                "连续": "background-color: #f5f5f5; color: #595959",
-                "新晋": "background-color: #d9f7be; color: #237804",
-                "回归": "background-color: #e6f4ff; color: #003a8c",
-                "掉出": "background-color: #fff1f0; color: #cf1322",
+                "连续": "background-color: rgba(155,164,176,0.12); color: #9BA4B0",
+                "新晋": "background-color: rgba(230,57,70,0.20); color: #FF7A87; font-weight: 600",
+                "回归": "background-color: rgba(255,176,0,0.18); color: #FFC74D",
+                "掉出": "background-color: rgba(6,167,125,0.18); color: #3DD8AE",
             }
             sty = mig.style.applymap(
                 lambda v: tag_color.get(v, ""), subset=["tag"]
@@ -859,22 +865,22 @@ with main_tabs[0]:
             })
 
             label_color = {
-                "趋势买入": "background-color: #d9f7be; color: #237804; font-weight: 600",
-                "左侧布局": "background-color: #d6e7ff; color: #003a8c; font-weight: 600",
-                "止盈减仓": "background-color: #ffe1a8; color: #874d00; font-weight: 600",
-                "回避":     "background-color: #fde0e0; color: #cf1322; font-weight: 600",
+                "趋势买入": "background-color: rgba(230,57,70,0.22); color: #FF7A87; font-weight: 600",
+                "左侧布局": "background-color: rgba(255,176,0,0.22); color: #FFC74D; font-weight: 600",
+                "止盈减仓": "background-color: rgba(6,167,125,0.22); color: #3DD8AE; font-weight: 600",
+                "回避":     "background-color: rgba(155,164,176,0.12); color: #9BA4B0; font-weight: 600",
             }
             quadrant_color = {
-                "领涨": "background-color: #e8f7d6; color: #237804",
-                "转强": "background-color: #e6f4ff; color: #003a8c",
-                "转弱": "background-color: #fff3b0; color: #874d00",
-                "落后": "background-color: #fff1f0; color: #cf1322",
-                "n/a":  "color: #94A3B8",
+                "领涨": "background-color: rgba(230,57,70,0.18); color: #FF7A87",
+                "转强": "background-color: rgba(255,176,0,0.18); color: #FFC74D",
+                "转弱": "background-color: rgba(74,143,231,0.18); color: #7FB3F2",
+                "落后": "background-color: rgba(6,167,125,0.18); color: #3DD8AE",
+                "n/a":  "color: #5F6877",
             }
             direction_color = {
-                "改善": "color: #237804; font-weight: 600",
-                "维持": "color: #595959",
-                "恶化": "color: #cf1322; font-weight: 600",
+                "改善": "color: #FF7A87; font-weight: 600",
+                "维持": "color: #9BA4B0",
+                "恶化": "color: #3DD8AE; font-weight: 600",
             }
             sty = disp.style \
                 .applymap(lambda v: label_color.get(v, ""), subset=["操作"]) \
@@ -882,8 +888,8 @@ with main_tabs[0]:
                           subset=[f"{lookback}日前", "当前"]) \
                 .applymap(lambda v: direction_color.get(v, ""), subset=["动向"]) \
                 .background_gradient(subset=["RS-Ratio", "RS-Mom"],
-                                      cmap="RdYlGn", vmin=-3, vmax=3) \
-                .background_gradient(subset=["5日(%)"], cmap="RdYlGn", vmin=-10, vmax=10) \
+                                      cmap="RdYlGn_r", vmin=-3, vmax=3) \
+                .background_gradient(subset=["5日(%)"], cmap="RdYlGn_r", vmin=-10, vmax=10) \
                 .format({"RS-Ratio": "{:.2f}", "RS-Mom": "{:.2f}", "5日(%)": "{:.2f}"})
             st.dataframe(sty, width="stretch", hide_index=True, height=560)
 
@@ -930,27 +936,27 @@ with main_tabs[0]:
                      "heat", "ret_5d", "ret_20d", "strength", "phase"]
 
         strength_color = {
-            "偏热":  "background-color: #ffd9a0; color: #cf1322",
-            "强势":  "background-color: #fff3b0; color: #ad6800",
-            "中性":  "background-color: #f5f5f5; color: #595959",
-            "冰点":  "background-color: #d6e7ff; color: #003a8c",
+            "偏热":  "background-color: rgba(230,57,70,0.22); color: #FF7A87; font-weight: 600",
+            "强势":  "background-color: rgba(255,176,0,0.20); color: #FFC74D",
+            "中性":  "background-color: rgba(155,164,176,0.10); color: #9BA4B0",
+            "冰点":  "background-color: rgba(6,167,125,0.20); color: #3DD8AE",
         }
         phase_color = {
-            "高潮":   "background-color: #ffb3a7; color: #780600",
-            "高位回调": "background-color: #ffe1a8; color: #874d00",
-            "强势":   "background-color: #fff3b0; color: #ad6800",
-            "抱团":   "background-color: #e8f7d6; color: #237804",
-            "酝酿反弹": "background-color: #d6e7ff; color: #003a8c",
-            "酝酿":   "background-color: #f5f5f5; color: #595959",
-            "底部反弹": "background-color: #cdeefd; color: #003a8c",
-            "冰点":   "background-color: #d6e7ff; color: #003a8c",
+            "高潮":   "background-color: rgba(230,57,70,0.26); color: #FF8794; font-weight: 600",
+            "高位回调": "background-color: rgba(255,176,0,0.22); color: #FFC74D",
+            "强势":   "background-color: rgba(255,176,0,0.18); color: #FFC74D",
+            "抱团":   "background-color: rgba(230,57,70,0.16); color: #FF7A87",
+            "酝酿反弹": "background-color: rgba(74,143,231,0.18); color: #7FB3F2",
+            "酝酿":   "background-color: rgba(155,164,176,0.12); color: #9BA4B0",
+            "底部反弹": "background-color: rgba(74,143,231,0.20); color: #7FB3F2",
+            "冰点":   "background-color: rgba(6,167,125,0.20); color: #3DD8AE",
         }
         sty = view[show_cols].style \
             .applymap(lambda v: strength_color.get(v, ""), subset=["strength"]) \
             .applymap(lambda v: phase_color.get(v, ""), subset=["phase"]) \
             .background_gradient(subset=["SC30", "SC3", "SC60", "heat"],
                                   cmap="RdYlGn_r", vmin=0, vmax=100) \
-            .background_gradient(subset=["ret_5d", "ret_20d"], cmap="RdYlGn", vmin=-15, vmax=15) \
+            .background_gradient(subset=["ret_5d", "ret_20d"], cmap="RdYlGn_r", vmin=-15, vmax=15) \
             .format({"SC30": "{:.1f}", "SC3": "{:.1f}", "SC60": "{:.1f}",
                      "heat": "{:.1f}", "ret_5d": "{:.2f}", "ret_20d": "{:.2f}"})
         st.dataframe(sty, width="stretch", hide_index=True, height=600)
@@ -999,24 +1005,36 @@ with main_tabs[0]:
                 fig.add_hline(y=50, line_dash="dot", line_color="grey")
                 fig.add_hline(y=35, line_dash="dot", line_color="green",
                               annotation_text="绿 (<35)")
-                fig.update_layout(height=520, hovermode="x unified",
-                                  margin=dict(l=20, r=20, t=20, b=20))
+                fig.update_layout(
+                    height=520, hovermode="x unified",
+                    margin=dict(l=20, r=20, t=20, b=20),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#E8ECF1", family="Inter"),
+                    xaxis=dict(gridcolor="#232830", color="#9BA4B0"),
+                    yaxis=dict(gridcolor="#232830", color="#9BA4B0"),
+                    legend=dict(font=dict(color="#E8ECF1")),
+                )
                 st.plotly_chart(fig, width="stretch")
 
 
 def _placeholder_card(title: str, subtitle: str, items: list[str]) -> str:
     items_html = "".join(
-        f'<li style="margin:6px 0;color:#475569;font-size:13.5px">{x}</li>'
+        f'<li style="margin:6px 0;color:#9BA4B0;font-size:12.5px;line-height:1.6">{x}</li>'
         for x in items
     )
     return (
-        f'<div class="kpi-card" style="padding:20px 22px">'
-        f'<div style="font-size:18px;font-weight:700;color:#0F172A">{title}</div>'
-        f'<div style="font-size:12px;color:#94A3B8;margin-top:2px">{subtitle}</div>'
+        f'<div class="kpi-card" style="padding:18px 20px">'
+        f'<div style="font-size:14px;font-weight:700;color:#E8ECF1;'
+        f'text-transform:uppercase;letter-spacing:0.14em">{title}</div>'
+        f'<div style="font-size:10.5px;color:#5F6877;margin-top:4px;'
+        f'text-transform:uppercase;letter-spacing:0.1em">{subtitle}</div>'
         f'<div style="margin-top:14px;'
-        f'padding:6px 10px;background:#F8FAFC;border-radius:8px;'
-        f'color:#64748B;font-size:11.5px;font-weight:600;'
-        f'display:inline-block">即将开放</div>'
+        f'padding:3px 10px;background:rgba(255,176,0,0.10);'
+        f'border:1px solid rgba(255,176,0,0.35);border-radius:2px;'
+        f'color:#FFB000;font-size:10.5px;font-weight:600;'
+        f'text-transform:uppercase;letter-spacing:0.12em;'
+        f'display:inline-block">COMING SOON</div>'
         f'<ul style="margin:14px 0 0 18px;padding:0">{items_html}</ul>'
         f'</div>'
     )
@@ -1032,11 +1050,11 @@ with main_tabs[1]:
     )
 
     stk_tabs = st.tabs([
-        "🏷️ 标签",
-        "📊 量化指标",
-        "📰 研报",
-        "🏭 产业图",
-        "📚 Wiki",
+        "标签",
+        "量化指标",
+        "研报",
+        "产业图",
+        "Wiki",
     ])
 
     # ---------- 标签 (existing tag engine) ----------
@@ -1076,41 +1094,50 @@ with main_tabs[1]:
                 if not tags:
                     st.info("暂无匹配标签")
                 else:
+                    # (fg, bg) — semi-transparent backgrounds tint over the dark card
+                    _RED   = ("#FF7A87", "rgba(230,57,70,0.20)")
+                    _AMBER = ("#FFC74D", "rgba(255,176,0,0.20)")
+                    _GREEN = ("#3DD8AE", "rgba(6,167,125,0.20)")
+                    _BLUE  = ("#7FB3F2", "rgba(74,143,231,0.20)")
+                    _GRAY  = ("#9BA4B0", "rgba(155,164,176,0.10)")
                     tag_color = {
                         # 现有
-                        "主线核心":       ("#237804", "#d9f7be"),
-                        "容量焦点":       ("#874d00", "#fff3b0"),
-                        "强趋势":         ("#ad6800", "#fff3b0"),
-                        "高拥挤":         ("#cf1322", "#fff1f0"),
-                        "回调观察":       ("#003a8c", "#e6f4ff"),
-                        "超跌反弹":       ("#003a8c", "#d6e7ff"),
-                        "右侧确认":       ("#237804", "#e8f7d6"),
-                        "放量突破":       ("#ad6800", "#ffe1a8"),
-                        "涨停基因":       ("#cf1322", "#fde0e0"),
-                        "缩量回调":       ("#595959", "#f5f5f5"),
+                        "主线核心":       _RED,
+                        "容量焦点":       _AMBER,
+                        "强趋势":         _AMBER,
+                        "高拥挤":         _RED,
+                        "回调观察":       _BLUE,
+                        "超跌反弹":       _GREEN,
+                        "右侧确认":       _RED,
+                        "放量突破":       _AMBER,
+                        "涨停基因":       _RED,
+                        "缩量回调":       _GRAY,
                         # §10.5 趋势卡位
-                        "趋势卡位买点":   ("#874d00", "#ffe1a8"),
-                        "趋势卡位精选":   ("#780600", "#ffb3a7"),
+                        "趋势卡位买点":   _AMBER,
+                        "趋势卡位精选":   _RED,
                         # §10.6 5层抄底
-                        "抄底·绝底(95)": ("#780600", "#ffb3a7"),
-                        "抄底·超高(87)": ("#cf1322", "#fde0e0"),
-                        "抄底·高(81)":   ("#ad6800", "#fff3b0"),
-                        "抄底·中高(68)": ("#003a8c", "#e6f4ff"),
-                        "抄底·中(60)":   ("#595959", "#f5f5f5"),
+                        "抄底·绝底(95)": _GREEN,
+                        "抄底·超高(87)": _GREEN,
+                        "抄底·高(81)":   _AMBER,
+                        "抄底·中高(68)": _BLUE,
+                        "抄底·中(60)":   _GRAY,
                         # §10.7 情绪龙头
-                        "涨停":           ("#cf1322", "#fde0e0"),
-                        "夺命板":         ("#780600", "#ffb3a7"),
-                        "攻击资金共振":   ("#ad6800", "#fff3b0"),
+                        "涨停":           _RED,
+                        "夺命板":         _RED,
+                        "攻击资金共振":   _AMBER,
                     }
                     badge_html = ""
                     for tag in tags:
                         # 连板·N板 / 连板·2板 etc. all share color
                         color_key = "涨停" if tag.startswith("连板·") else tag
-                        fg, bg = tag_color.get(color_key, ("#595959", "#f5f5f5"))
+                        fg, bg = tag_color.get(color_key, _GRAY)
                         badge_html += (
                             f'<span style="background-color:{bg};color:{fg};'
-                            f'padding:4px 12px;border-radius:12px;margin:4px;'
-                            f'font-weight:600;font-size:14px;display:inline-block">'
+                            f'padding:3px 10px;border-radius:2px;margin:3px;'
+                            f'font-weight:600;font-size:11.5px;'
+                            f'text-transform:uppercase;letter-spacing:0.04em;'
+                            f'border:1px solid {fg}33;'
+                            f'display:inline-block">'
                             f'{tag}</span>'
                         )
                     st.markdown(badge_html, unsafe_allow_html=True)
@@ -1125,7 +1152,7 @@ with main_tabs[1]:
                 ma_labels = [("MA5",  "above_ma5"), ("MA13", "above_ma13"), ("MA50", "above_ma50")]
                 for col, (name, key) in zip(ma_cols[:3], ma_labels):
                     on = feats[key]
-                    col.metric(name, "站上 ✅" if on else "下方 ❌")
+                    col.metric(name, "ABOVE" if on else "BELOW")
 
                 # RRG (vs 沪深300)
                 from einvest.io import load_stock as _load_stk
@@ -1133,10 +1160,9 @@ with main_tabs[1]:
                 if not stk_df.empty:
                     close_s = stk_df.set_index("date")["close"].sort_index()
                     rrg_info = stock_rrg(close_s)
-                    q_icon = {"领涨": "🟢", "转强": "🔵", "转弱": "🟡", "落后": "🔴", "n/a": "⚪"}
                     ma_cols[3].metric(
                         "RRG 象限",
-                        f"{q_icon.get(rrg_info['quadrant'], '⚪')} {rrg_info['quadrant']}",
+                        rrg_info["quadrant"],
                         f"RS={rrg_info['rs_ratio']} MOM={rrg_info['rs_momentum']}"
                         if rrg_info["rs_ratio"] is not None else "n/a",
                     )
