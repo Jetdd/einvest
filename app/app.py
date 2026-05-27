@@ -52,7 +52,7 @@ from einvest.io import (
 )
 from einvest.crowding import crowding_latest_per_concept, market_crowding_state
 from einvest.market_state import market_state_snapshot
-from einvest.rrg import rrg_latest_per_concept, stock_rrg
+from einvest.rrg import rrg_rotation_table, stock_rrg
 from einvest.rankings import (
     latest_topk_migration,
     n_day_return,
@@ -156,9 +156,9 @@ def _crowding() -> pd.DataFrame:
     )
 
 
-@st.cache_data(show_spinner="计算 RRG 轮动 ...")
-def _rrg() -> pd.DataFrame:
-    return rrg_latest_per_concept()
+@st.cache_data(show_spinner="计算 RRG 象限迁移 ...")
+def _rrg_rotation(lookback: int) -> pd.DataFrame:
+    return rrg_rotation_table(lookback=lookback)
 
 
 @st.cache_data(show_spinner="构建标签引擎 ...")
@@ -704,116 +704,113 @@ with main_tabs[0]:
             )
 
 
-    # -------- Tab 5: RRG rotation ---------
+    # -------- Tab 5: RRG 4-quadrant rotation table ---------
     with tabs[5]:
         st.markdown(
-            section_header("RRG 相对轮动", "Sector momentum vs CSI 300"),
+            section_header("板块象限轮动", "4-quadrant rotation · 操作标签"),
             unsafe_allow_html=True,
         )
 
-        rdf = _rrg()
-        if rdf.empty:
+        col_setting, _ = st.columns([1, 4])
+        lookback = col_setting.selectbox(
+            "对比窗口（日）", [5, 10, 20], index=1, key="rrg_lookback",
+        )
+
+        rot_df = _rrg_rotation(int(lookback))
+        if rot_df.empty:
             st.info("无可用 RRG 数据。")
         else:
-            # Quadrant counts
-            qc = rdf["quadrant"].value_counts()
-            q1, q2, q3, q4 = st.columns(4)
-            q1.markdown(kpi_card("领涨 Leading",  str(qc.get("领涨", 0)),
-                                 delta="RS+ · MOM+", accent=True), unsafe_allow_html=True)
-            q2.markdown(kpi_card("转强 Improving", str(qc.get("转强", 0)),
-                                 delta="RS- · MOM+"), unsafe_allow_html=True)
-            q3.markdown(kpi_card("转弱 Weakening", str(qc.get("转弱", 0)),
-                                 delta="RS+ · MOM-"), unsafe_allow_html=True)
-            q4.markdown(kpi_card("落后 Lagging",   str(qc.get("落后", 0)),
-                                 delta="RS- · MOM-"), unsafe_allow_html=True)
+            # 4 KPI cards by label
+            counts = rot_df["rotation_label"].value_counts()
+            c1, c2, c3, c4 = st.columns(4)
+            c1.markdown(
+                kpi_card("趋势买入", str(counts.get("趋势买入", 0)),
+                         delta="领涨象限 · 持有/加仓", accent=True),
+                unsafe_allow_html=True,
+            )
+            c2.markdown(
+                kpi_card("左侧布局", str(counts.get("左侧布局", 0)),
+                         delta="转强象限 · 即将进入领涨"),
+                unsafe_allow_html=True,
+            )
+            c3.markdown(
+                kpi_card("止盈减仓", str(counts.get("止盈减仓", 0)),
+                         delta="转弱象限 · 警惕退潮"),
+                unsafe_allow_html=True,
+            )
+            c4.markdown(
+                kpi_card("回避", str(counts.get("回避", 0)),
+                         delta="落后象限 · 双弱"),
+                unsafe_allow_html=True,
+            )
 
-            # Theme filter
-            col_a, col_b = st.columns([1, 4])
-            sel_theme = col_a.multiselect(
+            # Filters
+            f1, f2 = st.columns([1, 1])
+            sel_theme = f1.multiselect(
                 "主题筛选",
-                sorted(rdf["theme"].dropna().unique()),
-                key="rrg_theme_filter",
+                sorted(rot_df["theme"].dropna().unique()),
+                key="rrg_rot_theme",
             )
-            show_trail = col_a.checkbox("显示轨迹", value=True, key="rrg_show_trail")
-            view = rdf if not sel_theme else rdf[rdf["theme"].isin(sel_theme)]
-            view = view.dropna(subset=["rs_ratio", "rs_momentum"])
-
-            # Scatter plot
-            fig = go.Figure()
-
-            # Quadrant background shading
-            fig.add_shape(type="rect", x0=0, y0=0, x1=5, y1=5,
-                          fillcolor="rgba(82, 196, 122, 0.10)", line_width=0)  # 领涨
-            fig.add_shape(type="rect", x0=-5, y0=0, x1=0, y1=5,
-                          fillcolor="rgba(64, 169, 255, 0.10)", line_width=0)  # 转强
-            fig.add_shape(type="rect", x0=0, y0=-5, x1=5, y1=0,
-                          fillcolor="rgba(255, 215, 100, 0.10)", line_width=0)  # 转弱
-            fig.add_shape(type="rect", x0=-5, y0=-5, x1=0, y1=0,
-                          fillcolor="rgba(255, 130, 130, 0.10)", line_width=0)  # 落后
-
-            fig.add_hline(y=0, line_dash="dot", line_color="#999")
-            fig.add_vline(x=0, line_dash="dot", line_color="#999")
-
-            # Quadrant labels (corner annotations)
-            fig.add_annotation(x=3.5, y=3.5, text="<b>领涨 Leading</b>",
-                                showarrow=False, font=dict(color="#237804", size=14))
-            fig.add_annotation(x=-3.5, y=3.5, text="<b>转强 Improving</b>",
-                                showarrow=False, font=dict(color="#003a8c", size=14))
-            fig.add_annotation(x=3.5, y=-3.5, text="<b>转弱 Weakening</b>",
-                                showarrow=False, font=dict(color="#874d00", size=14))
-            fig.add_annotation(x=-3.5, y=-3.5, text="<b>落后 Lagging</b>",
-                                showarrow=False, font=dict(color="#cf1322", size=14))
-
-            # Plot trails first (so points are on top)
-            if show_trail:
-                for _, row in view.iterrows():
-                    tr = [v for v in row["trail_rs"] if v is not None]
-                    tm = [v for v in row["trail_mom"] if v is not None]
-                    if len(tr) < 2:
-                        continue
-                    fig.add_trace(go.Scatter(
-                        x=tr, y=tm, mode="lines",
-                        line=dict(color="rgba(150,150,150,0.35)", width=1),
-                        hoverinfo="skip", showlegend=False,
-                    ))
-
-            # Plot current positions, color by quadrant
-            qcolor = {"领涨": "#52c47a", "转强": "#40a9ff",
-                      "转弱": "#fa8c16", "落后": "#cf1322"}
-            for q, color in qcolor.items():
-                sub = view[view["quadrant"] == q]
-                if sub.empty:
-                    continue
-                fig.add_trace(go.Scatter(
-                    x=sub["rs_ratio"], y=sub["rs_momentum"],
-                    mode="markers+text",
-                    marker=dict(color=color, size=11, line=dict(color="white", width=1)),
-                    text=sub["concept"],
-                    textposition="top center",
-                    textfont=dict(size=10),
-                    name=q,
-                    hovertemplate="<b>%{text}</b><br>RS=%{x:.2f} MOM=%{y:.2f}<extra></extra>",
-                ))
-
-            fig.update_layout(
-                height=620,
-                xaxis=dict(title="RS-Ratio (相对强度)", range=[-5, 5], zeroline=False),
-                yaxis=dict(title="RS-Momentum (强度变化率)", range=[-5, 5], zeroline=False),
-                margin=dict(l=40, r=20, t=30, b=40),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.5, xanchor="center"),
+            sel_label = f2.multiselect(
+                "操作标签",
+                ["趋势买入", "左侧布局", "止盈减仓", "回避"],
+                key="rrg_rot_label",
             )
-            st.plotly_chart(fig, width="stretch")
+            view = rot_df
+            if sel_theme:
+                view = view[view["theme"].isin(sel_theme)]
+            if sel_label:
+                view = view[view["rotation_label"].isin(sel_label)]
 
-            with st.expander("RRG 全表 (按象限分组)"):
-                show = view[["theme", "concept", "rs_ratio", "rs_momentum", "quadrant"]] \
-                        .sort_values(["quadrant", "rs_ratio"], ascending=[True, False])
-                st.dataframe(show, width="stretch", hide_index=True)
+            # Render styled table
+            show_cols = ["theme", "concept", "rotation_label", "prior_quadrant",
+                         "quadrant", "direction", "rs_ratio", "rs_momentum", "ret_5d"]
+            disp = view[show_cols].rename(columns={
+                "theme": "主题",
+                "concept": "概念",
+                "rotation_label": "操作",
+                "prior_quadrant": f"{lookback}日前",
+                "quadrant": "当前",
+                "direction": "动向",
+                "rs_ratio": "RS-Ratio",
+                "rs_momentum": "RS-Mom",
+                "ret_5d": "5日(%)",
+            })
+
+            label_color = {
+                "趋势买入": "background-color: #d9f7be; color: #237804; font-weight: 600",
+                "左侧布局": "background-color: #d6e7ff; color: #003a8c; font-weight: 600",
+                "止盈减仓": "background-color: #ffe1a8; color: #874d00; font-weight: 600",
+                "回避":     "background-color: #fde0e0; color: #cf1322; font-weight: 600",
+            }
+            quadrant_color = {
+                "领涨": "background-color: #e8f7d6; color: #237804",
+                "转强": "background-color: #e6f4ff; color: #003a8c",
+                "转弱": "background-color: #fff3b0; color: #874d00",
+                "落后": "background-color: #fff1f0; color: #cf1322",
+                "n/a":  "color: #94A3B8",
+            }
+            direction_color = {
+                "改善": "color: #237804; font-weight: 600",
+                "维持": "color: #595959",
+                "恶化": "color: #cf1322; font-weight: 600",
+            }
+            sty = disp.style \
+                .applymap(lambda v: label_color.get(v, ""), subset=["操作"]) \
+                .applymap(lambda v: quadrant_color.get(v, ""),
+                          subset=[f"{lookback}日前", "当前"]) \
+                .applymap(lambda v: direction_color.get(v, ""), subset=["动向"]) \
+                .background_gradient(subset=["RS-Ratio", "RS-Mom"],
+                                      cmap="RdYlGn", vmin=-3, vmax=3) \
+                .background_gradient(subset=["5日(%)"], cmap="RdYlGn", vmin=-10, vmax=10) \
+                .format({"RS-Ratio": "{:.2f}", "RS-Mom": "{:.2f}", "5日(%)": "{:.2f}"})
+            st.dataframe(sty, width="stretch", hide_index=True, height=560)
 
             st.caption(
-                "**RS-Ratio** = (板块/沪深300) 价格比的 60 日滚动 Z-score。"
-                "**RS-Momentum** = RS-Ratio 5 日变化值的 60 日滚动 Z-score。"
-                "**轨迹** 显示最近 5 个交易日的位置变化（灰线 = 较早，端点 = 今天）。"
-                "通常路径：转强 → 领涨 → 转弱 → 落后 → 转强。"
+                "**操作标签** 由当前象限决定：领涨→趋势买入 · 转强→左侧布局 · 转弱→止盈减仓 · 落后→回避。"
+                f"**动向** 比较 {lookback} 日前与今日的象限质量（领涨>转强>转弱>落后）。"
+                "**RS-Ratio** = (板块/沪深300) 60 日滚动 Z-score。"
+                "**RS-Mom** = RS-Ratio 5 日变化的 60 日滚动 Z-score。"
             )
 
 
