@@ -1004,10 +1004,26 @@ with main_tabs[0]:
                 st.plotly_chart(fig, width="stretch")
 
 
-# -------- Main Tab 2: 个股 — Stock tags ---------
-with main_tabs[1]:
-    st.subheader("个股标签 — 量化交易状态")
+def _placeholder_card(title: str, subtitle: str, items: list[str]) -> str:
+    items_html = "".join(
+        f'<li style="margin:6px 0;color:#475569;font-size:13.5px">{x}</li>'
+        for x in items
+    )
+    return (
+        f'<div class="kpi-card" style="padding:20px 22px">'
+        f'<div style="font-size:18px;font-weight:700;color:#0F172A">{title}</div>'
+        f'<div style="font-size:12px;color:#94A3B8;margin-top:2px">{subtitle}</div>'
+        f'<div style="margin-top:14px;'
+        f'padding:6px 10px;background:#F8FAFC;border-radius:8px;'
+        f'color:#64748B;font-size:11.5px;font-weight:600;'
+        f'display:inline-block">即将开放</div>'
+        f'<ul style="margin:14px 0 0 18px;padding:0">{items_html}</ul>'
+        f'</div>'
+    )
 
+
+# -------- Main Tab 2: 个股 ---------
+with main_tabs[1]:
     col_input, _ = st.columns([1, 3])
     stock_input = col_input.text_input(
         "输入股票代码",
@@ -1015,126 +1031,210 @@ with main_tabs[1]:
         placeholder="例如: 000001.XSHE 或 000001.SZ",
     )
 
-    if stock_input:
-        snapshot = _tag_theme_snapshot()
-        with st.spinner("计算标签..."):
-            result = generate_stock_tags(stock_input, theme_snapshot=snapshot)
+    stk_tabs = st.tabs([
+        "🏷️ 标签",
+        "📊 量化指标",
+        "📰 研报",
+        "🏭 产业图",
+        "📚 Wiki",
+    ])
 
-        if not result["features"]:
-            st.error(f"无法获取 {stock_input} 的数据（可能不在当前 universe 中或数据不足）")
+    # ---------- 标签 (existing tag engine) ----------
+    with stk_tabs[0]:
+        if not stock_input:
+            st.info("请输入股票代码")
         else:
-            feats = result["features"]
-            themes = result["themes"]
-            tags = result["tags"]
-            evidence = result["tag_evidence"]
-            stock_display_name = stock_name(result["code"])
+            snapshot = _tag_theme_snapshot()
+            with st.spinner("计算标签..."):
+                result = generate_stock_tags(stock_input, theme_snapshot=snapshot)
 
-            display_title = result["code"]
-            if stock_display_name:
-                display_title = f"{stock_display_name} · {result['code']}"
-            st.markdown(f"### {display_title}")
-
-            # --- Top row: basic info ---
-            c1, c2, c3, c4, c5, c6 = st.columns(6)
-            c1.metric("收盘价", f"{feats['close']:.2f}")
-            c2.metric("1日涨幅", f"{feats['ret_1d']:.2f}%")
-            c3.metric("5日涨幅", f"{feats['ret_5d']:.2f}%")
-            c4.metric("20日涨幅", f"{feats['ret_20d']:.2f}%")
-            c5.metric("成交额分位", f"{feats['amount_pct_60d']:.0f}%")
-            c6.metric("20日回撤", f"{feats['drawdown_from_high']:.1f}%")
-
-            # --- Tag badges ---
-            st.markdown("### 交易标签")
-            if not tags:
-                st.info("暂无匹配标签")
+            if not result["features"]:
+                st.error(f"无法获取 {stock_input} 的数据（可能不在当前 universe 中或数据不足）")
             else:
-                tag_color = {
-                    # 现有
-                    "主线核心":       ("#237804", "#d9f7be"),
-                    "容量焦点":       ("#874d00", "#fff3b0"),
-                    "强趋势":         ("#ad6800", "#fff3b0"),
-                    "高拥挤":         ("#cf1322", "#fff1f0"),
-                    "回调观察":       ("#003a8c", "#e6f4ff"),
-                    "超跌反弹":       ("#003a8c", "#d6e7ff"),
-                    "右侧确认":       ("#237804", "#e8f7d6"),
-                    "放量突破":       ("#ad6800", "#ffe1a8"),
-                    "涨停基因":       ("#cf1322", "#fde0e0"),
-                    "缩量回调":       ("#595959", "#f5f5f5"),
-                    # §10.5 趋势卡位
-                    "趋势卡位买点":   ("#874d00", "#ffe1a8"),
-                    "趋势卡位精选":   ("#780600", "#ffb3a7"),
-                    # §10.6 5层抄底
-                    "抄底·绝底(95)": ("#780600", "#ffb3a7"),
-                    "抄底·超高(87)": ("#cf1322", "#fde0e0"),
-                    "抄底·高(81)":   ("#ad6800", "#fff3b0"),
-                    "抄底·中高(68)": ("#003a8c", "#e6f4ff"),
-                    "抄底·中(60)":   ("#595959", "#f5f5f5"),
-                    # §10.7 情绪龙头
-                    "涨停":           ("#cf1322", "#fde0e0"),
-                    "夺命板":         ("#780600", "#ffb3a7"),
-                    "攻击资金共振":   ("#ad6800", "#fff3b0"),
-                }
-                badge_html = ""
-                for tag in tags:
-                    # 连板·N板 / 连板·2板 etc. all share color
-                    color_key = "涨停" if tag.startswith("连板·") else tag
-                    fg, bg = tag_color.get(color_key, ("#595959", "#f5f5f5"))
-                    badge_html += (
-                        f'<span style="background-color:{bg};color:{fg};'
-                        f'padding:4px 12px;border-radius:12px;margin:4px;'
-                        f'font-weight:600;font-size:14px;display:inline-block">'
-                        f'{tag}</span>'
-                    )
-                st.markdown(badge_html, unsafe_allow_html=True)
+                feats = result["features"]
+                themes = result["themes"]
+                tags = result["tags"]
+                evidence = result["tag_evidence"]
+                stock_display_name = stock_name(result["code"])
 
-                with st.expander("标签依据"):
+                display_title = result["code"]
+                if stock_display_name:
+                    display_title = f"{stock_display_name} · {result['code']}"
+                st.markdown(f"### {display_title}")
+
+                # --- Top row: basic info ---
+                c1, c2, c3, c4, c5, c6 = st.columns(6)
+                c1.metric("收盘价", f"{feats['close']:.2f}")
+                c2.metric("1日涨幅", f"{feats['ret_1d']:.2f}%")
+                c3.metric("5日涨幅", f"{feats['ret_5d']:.2f}%")
+                c4.metric("20日涨幅", f"{feats['ret_20d']:.2f}%")
+                c5.metric("成交额分位", f"{feats['amount_pct_60d']:.0f}%")
+                c6.metric("20日回撤", f"{feats['drawdown_from_high']:.1f}%")
+
+                # --- Tag badges ---
+                st.markdown("### 交易标签")
+                if not tags:
+                    st.info("暂无匹配标签")
+                else:
+                    tag_color = {
+                        # 现有
+                        "主线核心":       ("#237804", "#d9f7be"),
+                        "容量焦点":       ("#874d00", "#fff3b0"),
+                        "强趋势":         ("#ad6800", "#fff3b0"),
+                        "高拥挤":         ("#cf1322", "#fff1f0"),
+                        "回调观察":       ("#003a8c", "#e6f4ff"),
+                        "超跌反弹":       ("#003a8c", "#d6e7ff"),
+                        "右侧确认":       ("#237804", "#e8f7d6"),
+                        "放量突破":       ("#ad6800", "#ffe1a8"),
+                        "涨停基因":       ("#cf1322", "#fde0e0"),
+                        "缩量回调":       ("#595959", "#f5f5f5"),
+                        # §10.5 趋势卡位
+                        "趋势卡位买点":   ("#874d00", "#ffe1a8"),
+                        "趋势卡位精选":   ("#780600", "#ffb3a7"),
+                        # §10.6 5层抄底
+                        "抄底·绝底(95)": ("#780600", "#ffb3a7"),
+                        "抄底·超高(87)": ("#cf1322", "#fde0e0"),
+                        "抄底·高(81)":   ("#ad6800", "#fff3b0"),
+                        "抄底·中高(68)": ("#003a8c", "#e6f4ff"),
+                        "抄底·中(60)":   ("#595959", "#f5f5f5"),
+                        # §10.7 情绪龙头
+                        "涨停":           ("#cf1322", "#fde0e0"),
+                        "夺命板":         ("#780600", "#ffb3a7"),
+                        "攻击资金共振":   ("#ad6800", "#fff3b0"),
+                    }
+                    badge_html = ""
                     for tag in tags:
-                        st.markdown(f"**{tag}**：{evidence.get(tag, '')}")
+                        # 连板·N板 / 连板·2板 etc. all share color
+                        color_key = "涨停" if tag.startswith("连板·") else tag
+                        fg, bg = tag_color.get(color_key, ("#595959", "#f5f5f5"))
+                        badge_html += (
+                            f'<span style="background-color:{bg};color:{fg};'
+                            f'padding:4px 12px;border-radius:12px;margin:4px;'
+                            f'font-weight:600;font-size:14px;display:inline-block">'
+                            f'{tag}</span>'
+                        )
+                    st.markdown(badge_html, unsafe_allow_html=True)
 
-            # --- MA status + RRG quadrant ---
-            st.markdown("### 均线状态 + RRG 象限")
-            ma_cols = st.columns(4)
-            ma_labels = [("MA5",  "above_ma5"), ("MA13", "above_ma13"), ("MA50", "above_ma50")]
-            for col, (name, key) in zip(ma_cols[:3], ma_labels):
-                on = feats[key]
-                col.metric(name, "站上 ✅" if on else "下方 ❌")
+                    with st.expander("标签依据"):
+                        for tag in tags:
+                            st.markdown(f"**{tag}**：{evidence.get(tag, '')}")
 
-            # RRG (vs 沪深300)
-            from einvest.io import load_stock as _load_stk
-            stk_df = _load_stk(result["code"])
-            if not stk_df.empty:
-                close_s = stk_df.set_index("date")["close"].sort_index()
-                rrg_info = stock_rrg(close_s)
-                q_icon = {"领涨": "🟢", "转强": "🔵", "转弱": "🟡", "落后": "🔴", "n/a": "⚪"}
-                ma_cols[3].metric(
-                    "RRG 象限",
-                    f"{q_icon.get(rrg_info['quadrant'], '⚪')} {rrg_info['quadrant']}",
-                    f"RS={rrg_info['rs_ratio']} MOM={rrg_info['rs_momentum']}"
-                    if rrg_info["rs_ratio"] is not None else "n/a",
-                )
+                # --- MA status + RRG quadrant ---
+                st.markdown("### 均线状态 + RRG 象限")
+                ma_cols = st.columns(4)
+                ma_labels = [("MA5",  "above_ma5"), ("MA13", "above_ma13"), ("MA50", "above_ma50")]
+                for col, (name, key) in zip(ma_cols[:3], ma_labels):
+                    on = feats[key]
+                    col.metric(name, "站上 ✅" if on else "下方 ❌")
 
-            # --- Theme membership table ---
-            st.markdown("### 所属主题状态")
-            if themes:
-                theme_rows = []
-                for t in themes:
-                    tr = t.get("top7_rank")
-                    ar = t.get("amount_rank")
-                    theme_rows.append({
-                        "主题": t["theme"],
-                        "概念": t["concept"],
-                        "SC30": t.get("sc30", float("nan")),
-                        "heat": t.get("heat", float("nan")),
-                        "强度": t.get("strength", "n/a"),
-                        "阶段": t.get("phase", "n/a"),
-                        "Top7": "是" if t.get("in_top7") else "否",
-                        "排名": int(tr) if tr is not None else "—",
-                        "成交额排名": int(ar) if ar is not None else "—",
-                    })
-                tdf = pd.DataFrame(theme_rows)
-                sty = tdf.style \
-                    .background_gradient(subset=["SC30", "heat"], cmap="RdYlGn_r", vmin=0, vmax=100) \
-                    .format({"SC30": "{:.1f}", "heat": "{:.1f}"})
-                st.dataframe(sty, width="stretch", hide_index=True)
-            else:
-                st.info("该股票不在当前热门板块 universe 中")
+                # RRG (vs 沪深300)
+                from einvest.io import load_stock as _load_stk
+                stk_df = _load_stk(result["code"])
+                if not stk_df.empty:
+                    close_s = stk_df.set_index("date")["close"].sort_index()
+                    rrg_info = stock_rrg(close_s)
+                    q_icon = {"领涨": "🟢", "转强": "🔵", "转弱": "🟡", "落后": "🔴", "n/a": "⚪"}
+                    ma_cols[3].metric(
+                        "RRG 象限",
+                        f"{q_icon.get(rrg_info['quadrant'], '⚪')} {rrg_info['quadrant']}",
+                        f"RS={rrg_info['rs_ratio']} MOM={rrg_info['rs_momentum']}"
+                        if rrg_info["rs_ratio"] is not None else "n/a",
+                    )
+
+                # --- Theme membership table ---
+                st.markdown("### 所属主题状态")
+                if themes:
+                    theme_rows = []
+                    for t in themes:
+                        tr = t.get("top7_rank")
+                        ar = t.get("amount_rank")
+                        theme_rows.append({
+                            "主题": t["theme"],
+                            "概念": t["concept"],
+                            "SC30": t.get("sc30", float("nan")),
+                            "heat": t.get("heat", float("nan")),
+                            "强度": t.get("strength", "n/a"),
+                            "阶段": t.get("phase", "n/a"),
+                            "Top7": "是" if t.get("in_top7") else "否",
+                            "排名": int(tr) if tr is not None else "—",
+                            "成交额排名": int(ar) if ar is not None else "—",
+                        })
+                    tdf = pd.DataFrame(theme_rows)
+                    sty = tdf.style \
+                        .background_gradient(subset=["SC30", "heat"], cmap="RdYlGn_r", vmin=0, vmax=100) \
+                        .format({"SC30": "{:.1f}", "heat": "{:.1f}"})
+                    st.dataframe(sty, width="stretch", hide_index=True)
+                else:
+                    st.info("该股票不在当前热门板块 universe 中")
+
+    # ---------- 量化指标 (placeholder) ----------
+    with stk_tabs[1]:
+        st.markdown(f"### 量化指标 · {stock_input or '—'}")
+        st.markdown(
+            _placeholder_card(
+                "量化指标体系",
+                "Factor exposures · Risk metrics",
+                [
+                    "<b>因子暴露</b>：价值 / 成长 / 动量 / 质量 / 波动率 / 规模 6 大风格因子打分",
+                    "<b>多因子排名</b>：在所属概念 / 行业 / 全市场的截面分位",
+                    "<b>风险指标</b>：年化波动 · 最大回撤 · Sharpe / Calmar · Beta vs 沪深300",
+                    "<b>资金面</b>：北向持股变动 / 融资余额 / 大单净流入 (Lv2 数据接入后)",
+                    "<b>事件信号</b>：业绩预告 / 分红除权 / 解禁 / 减持公告",
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+
+    # ---------- 研报 (placeholder) ----------
+    with stk_tabs[2]:
+        st.markdown(f"### 卖方研报 · {stock_input or '—'}")
+        st.markdown(
+            _placeholder_card(
+                "研报聚合",
+                "Sell-side research · Foreign IB views",
+                [
+                    "<b>评级一致性</b>：中信/中金/华泰 等内资 + 高盛/摩根 等外资 评级分布",
+                    "<b>目标价区间</b>：N 家机构目标价均值 / 中位数 · 距现价空间",
+                    "<b>盈利预测变动</b>：未来 12 个月 EPS 一致预期 30/60/90 天变动",
+                    "<b>最新研报摘要</b>：近 30 日新发研报标题 · 核心观点 · PDF 链接",
+                    "<b>北向 vs 卖方背离</b>：评级上调但北向减持 / 反之 → 信号点",
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+
+    # ---------- 产业图 (placeholder) ----------
+    with stk_tabs[3]:
+        st.markdown(f"### 产业链图 · {stock_input or '—'}")
+        st.markdown(
+            _placeholder_card(
+                "产业链定位",
+                "Industry value chain · Peer mapping",
+                [
+                    "<b>所在产业链位置</b>：上游原材料 / 中游制造 / 下游应用 节点定位",
+                    "<b>上游供应商</b>：核心原材料 / 设备 / 零部件 提供商及其股价联动",
+                    "<b>下游客户</b>：主要客户构成 · 客户集中度 · 客户股价表现",
+                    "<b>同业竞争对手</b>：核心 peer 列表 · 营收/利润/估值横向对比",
+                    "<b>替代品 / 互补品</b>：技术路线 / 应用替代关系图谱",
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+
+    # ---------- Wiki (placeholder) ----------
+    with stk_tabs[4]:
+        st.markdown(f"### Wiki · {stock_input or '—'}")
+        st.markdown(
+            _placeholder_card(
+                "公司画像",
+                "Business overview · KPI snapshot",
+                [
+                    "<b>公司简介</b>：主营业务 / 控股股东 / 上市时间 / 注册地",
+                    "<b>核心业务收入结构</b>：分业务 / 分区域 收入占比 · 同比",
+                    "<b>关键运营指标</b>：行业 KPI（产能利用率 / 出货量 / ARPU 等）",
+                    "<b>核心管理层</b>：董事长 / CEO / CFO 背景 + 持股变动",
+                    "<b>市场关注题材</b>：最近被资金炒作的故事线 · 相关概念板块",
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
