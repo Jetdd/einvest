@@ -35,7 +35,7 @@ from .indicators import (
     up_down_count,
 )
 from .indicators.sc import rsv
-from .io import load_close_panel, load_full_a, load_index, universe
+from .io import full_a_universe, load_close_panel, load_full_a, load_index
 from .sectors import MAIN_INDICES
 
 
@@ -124,10 +124,10 @@ def _cci84_to_position(cci84: float) -> float:
 # ---------------------------------------------------------------------------
 
 PHASE_6_POSITION_HINT = {
-    "上行早期": (40, 60),
+    "上行初期": (40, 60),
     "上行中期": (60, 80),
     "上行晚期": (40, 60),
-    "下行早期": (20, 40),
+    "下行初期": (20, 40),
     "下行中期": (10, 25),
     "下行晚期": (0, 15),
     "震荡":     (30, 50),
@@ -135,10 +135,10 @@ PHASE_6_POSITION_HINT = {
 }
 
 PHASE_6_STRATEGY = {
-    "上行早期": "左侧布局主线，关注 SC30+SC3 共振向上的板块",
+    "上行初期": "左侧布局主线，关注 SC30+SC3 共振向上的板块",
     "上行中期": "趋势加仓，主线持有 + 高低切",
     "上行晚期": "警惕派发，逐步止盈减仓",
-    "下行早期": "仅持核心，新仓回避",
+    "下行初期": "仅持核心，新仓回避",
     "下行中期": "缩容空仓，等待流动性恢复",
     "下行晚期": "全面防守，等待右侧买点",
     "震荡":     "持股观望，不大开大合",
@@ -163,15 +163,15 @@ def market_phase_6(*, market_sc30: float, market_sc30_5d_mom: float,
     # 上行晚期：SC30 顶部 OR CCI 超买 + 广度边际衰减
     if market_sc30 >= 75 or (not pd.isna(cci84) and cci84 > 120 and breadth_ratio < 1.0):
         return "上行晚期"
-    # 下行早期：SC30 走弱且广度翻空
+    # 下行初期：SC30 走弱且广度翻空
     if market_sc30 < 55 and breadth_ratio < 1.0:
-        return "下行早期"
+        return "下行初期"
     # 上行中期：SC30 50-75 且方向向上
     if 50 <= market_sc30 < 75 and market_sc30_5d_mom > 0:
         return "上行中期"
-    # 上行早期：SC30 仍低但开始上行 + 广度转好
+    # 上行初期：SC30 仍低但开始上行 + 广度转好
     if market_sc30 < 50 and market_sc30_5d_mom > 0 and breadth_ratio > 1.0:
-        return "上行早期"
+        return "上行初期"
     return "震荡"
 
 
@@ -437,7 +437,7 @@ def market_state_snapshot(
     last_date = full_a["date"].iloc[-1].date().isoformat()
 
     if close_panel is None:
-        close_panel = load_close_panel(universe())
+        close_panel = load_close_panel(full_a_universe())
     mst_df = mst(close_panel, windows=(5, 13, 50))
     udc = up_down_count(close_panel)
     cyc = cycle_detail if cycle_detail is not None else cycle_detail_latest()
@@ -454,11 +454,16 @@ def market_state_snapshot(
     liq_b = pf["liquidity_band"]
     breadth_ratio = float(udc["breadth_ratio"].iloc[-1])
 
-    # Market-wide SC30/SC3 from 万得全A — comparable to original framework's SC30中期
-    full_a_close = full_a.set_index("date")["close"]
-    market_sc30_series = rsv(full_a_close, 30)
+    # Market-wide SC30/SC3 from 万得全A — comparable to original framework's SC30中期.
+    # Use OHLC (low/high) per the framework's primary RSV definition; on a short
+    # window (SC3) close-only degenerates to 0/100, OHLC smooths it.
+    full_a_idx = full_a.set_index("date")
+    full_a_close = full_a_idx["close"]
+    full_a_low = full_a_idx["low"] if "low" in full_a_idx.columns else None
+    full_a_high = full_a_idx["high"] if "high" in full_a_idx.columns else None
+    market_sc30_series = rsv(full_a_close, 30, low=full_a_low, high=full_a_high)
     market_sc30 = float(market_sc30_series.iloc[-1])
-    market_sc3 = float(rsv(full_a_close, 3).iloc[-1])
+    market_sc3 = float(rsv(full_a_close, 3, low=full_a_low, high=full_a_high).iloc[-1])
     market_sc30_5d_mom = (
         float(market_sc30 - market_sc30_series.iloc[-6])
         if len(market_sc30_series) > 5 and not pd.isna(market_sc30_series.iloc[-6])

@@ -25,7 +25,7 @@ import pandas as pd
 from dm_data import get_concept_constituents, load_stock_hotconcept, wind
 
 from .codes import rq_to_wind, wind_to_rq
-from .config import INDEX_DIR, STOCK_DIR
+from .config import FULL_A_UNIVERSE, INDEX_DIR, STOCK_DIR
 from .sectors import FULL_A_WIND, HOT_CONCEPTS
 
 
@@ -63,6 +63,7 @@ def clear_io_cache() -> None:
     load_index.cache_clear()
     constituents.cache_clear()
     _stock_name_map.cache_clear()
+    full_a_universe.cache_clear()
 
 
 def load_close_panel(codes: Iterable[str]) -> pd.DataFrame:
@@ -116,7 +117,11 @@ constituents.cache_clear = _constituents_cached.cache_clear  # type: ignore[attr
 
 
 def universe(concepts: Iterable[str] | None = None) -> list[str]:
-    """Union of constituents across the chosen Wind concepts (rq format)."""
+    """Union of constituents across the chosen Wind concepts (rq format).
+
+    This is the *hot-concept* universe (~1.8k stocks) used for sector / concept
+    features. For whole-market breadth use `full_a_universe()`.
+    """
     from .sectors import all_concepts as _all
     selected = list(concepts) if concepts is not None else _all()
     out: set[str] = set()
@@ -124,6 +129,23 @@ def universe(concepts: Iterable[str] | None = None) -> list[str]:
         for code in constituents(c):
             out.add(code)
     return sorted(out)
+
+
+@functools.cache
+def full_a_universe() -> list[str]:
+    """All live A-share rq codes (沪/深/科创/创业, ~5k stocks).
+
+    Reads the list persisted by the daily update (`scripts/update_daily.py`,
+    sourced from `rqdatac.all_instruments`). Used for whole-market breadth /
+    MST / 涨跌停 — distinct from the hot-concept `universe()`.
+
+    Falls back to every stock parquet present on disk if the list is missing
+    (so the dashboard still renders before the first full update runs).
+    """
+    if FULL_A_UNIVERSE.exists():
+        codes = pd.read_parquet(FULL_A_UNIVERSE)["order_book_id"].astype(str)
+        return sorted(c for c in codes if not c.endswith(".NEEQ"))
+    return sorted(p.stem for p in STOCK_DIR.glob("*.parquet"))
 
 
 def mapping_long() -> pd.DataFrame:

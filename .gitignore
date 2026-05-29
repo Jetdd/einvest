@@ -33,7 +33,12 @@ Thumbs.db
 # IDE
 .idea/
 .vscode/
+.claude/
 *.swp
+
+# Scratch / one-off
+_*.py
+_*.txt
 
 # Streamlit
 .streamlit/secrets.toml

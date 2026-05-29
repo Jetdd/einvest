@@ -24,9 +24,9 @@ from .indicators import (
     mst,
     up_down_count,
 )
-from .io import load_close_panel, load_full_a, load_index, universe
+from .io import full_a_universe, load_close_panel, load_full_a, load_index
 from .rankings import latest_topk_migration, n_day_return, sector_close_panel
-from .sectors import MAIN_INDICES
+from .sectors import FULL_A_WIND, MAIN_INDICES
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ def liquidity_snapshot(window: int = 252) -> dict:
         "total_amount_billion": round(float(amt.iloc[-1]) / 1e8, 2),  # 亿元
         "score": round(float(score), 1) if not pd.isna(score) else None,
         "band": liquidity_band(score),
-        "source": "Wind 8841388.WI",
+        "source": f"Wind {FULL_A_WIND}",
     }
 
 
@@ -140,8 +140,8 @@ def render() -> None:
         print(f"  评分：{liq['score']}   →   {liq['band']}")
 
     # 3. 市场广度 (一次性 load close panel，共享给 MST / up_down / limit_count)
-    print("\n[3. 市场广度 — 热门板块全集]")
-    codes = universe()
+    print("\n[3. 市场广度 — 全 A 股]")
+    codes = full_a_universe()
     close_panel = load_close_panel(codes)
     bs = breadth_snapshot(close_panel, codes)
     if bs:

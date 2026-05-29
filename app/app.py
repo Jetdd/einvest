@@ -43,6 +43,7 @@ from einvest.indicators import (
     up_down_count,
 )
 from einvest.io import (
+    full_a_universe,
     latest_concept_date,
     load_close_panel,
     load_full_a,
@@ -53,6 +54,7 @@ from einvest.io import (
 from einvest.crowding import crowding_latest_per_concept, market_crowding_state
 from einvest.market_state import market_state_snapshot
 from einvest.risk_score import risk_score_snapshot, risk_light_from_stats
+from einvest.signal_backtest import signal_backtest_snapshot, backtest_table_df
 from einvest.rrg import rrg_rotation_table, stock_rrg
 from einvest.rankings import (
     latest_topk_migration,
@@ -63,7 +65,7 @@ from einvest.sectors import HOT_CONCEPTS, MAIN_INDICES
 from einvest.tags import generate_stock_tags
 
 from style import (
-    GLOBAL_CSS, brand_bar, kpi_card, pill,
+    GLOBAL_CSS, brand_bar, concept_icon, kpi_card, option_track, pill,
     section_header, sidebar_brand,
 )
 
@@ -85,9 +87,16 @@ st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 # Cached loaders
 # ---------------------------------------------------------------------------
 
-@st.cache_data(show_spinner="加载个股 close panel ...")
+@st.cache_data(show_spinner="加载全 A close panel ...")
 def _close_panel() -> pd.DataFrame:
-    return load_close_panel(universe())
+    # Whole-market breadth / MST / 涨跌停 use the full A-share universe (~5k),
+    # not the hot-concept universe (~1.8k).
+    return load_close_panel(full_a_universe())
+
+
+@st.cache_data(show_spinner="加载全 A universe ...")
+def _full_a_universe() -> list[str]:
+    return full_a_universe()
 
 
 @st.cache_data(show_spinner="加载 universe ...")
@@ -146,6 +155,50 @@ def _market_state():
     )
 
 
+@st.cache_data(show_spinner="加载板块成分股 ...")
+def _sector_constituents(concept: str) -> pd.DataFrame:
+    """名称 / 代码 / 收盘 / 涨跌幅% for one concept's constituents (desc by 涨跌幅)."""
+    from einvest.io import constituents, load_stock
+    rows = []
+    for code in constituents(concept):
+        df = load_stock(code)
+        if df.empty:
+            continue
+        close = float(df["close"].iloc[-1])
+        prev = float(df["close"].iloc[-2]) if len(df) > 1 else close
+        pct = (close / prev - 1) * 100 if prev else 0.0
+        rows.append({"名称": stock_name(code) or code, "代码": code.split(".")[0],
+                     "收盘": round(close, 2), "涨跌幅%": round(pct, 2)})
+    d = pd.DataFrame(rows)
+    if not d.empty:
+        d = d.sort_values("涨跌幅%", ascending=False).reset_index(drop=True)
+    return d
+
+
+def _constituent_table_html(detail: pd.DataFrame) -> str:
+    """Compact 红涨绿跌 table (名称/代码/收盘/涨跌幅%) that fits a narrow column."""
+    rows = ""
+    for _, r in detail.iterrows():
+        pct = r["涨跌幅%"]
+        color = "#F0616D" if pct > 0 else "#35B97F" if pct < 0 else "#5F6877"
+        rows += (
+            "<div style='display:flex;justify-content:space-between;align-items:center;"
+            "padding:4px 2px;border-bottom:1px solid var(--border);font-size:12px'>"
+            f"<div style='flex:1;min-width:0'><span style='color:#E8ECF1;font-weight:600'>{r['名称']}</span>"
+            f"<span style='color:#5F6877;font-size:10.5px;margin-left:6px;"
+            "font-family:JetBrains Mono,monospace'>" f"{r['代码']}</span></div>"
+            "<div style='font-family:JetBrains Mono,monospace;font-variant-numeric:tabular-nums;"
+            "text-align:right'>"
+            f"<span style='color:#C9D2DC'>{r['收盘']:.2f}</span>"
+            f"<span style='color:{color};font-weight:600;display:inline-block;"
+            f"width:62px'>{pct:+.2f}%</span></div></div>"
+        )
+    return (f"<div style='max-height:320px;overflow-y:auto;margin:2px 0'>"
+            f"<div style='color:#5F6877;font-size:10px;text-transform:uppercase;"
+            f"letter-spacing:0.06em;padding:2px'>{len(detail)} 只成分股 · 按涨跌幅排序</div>"
+            f"{rows}</div>")
+
+
 @st.cache_data(show_spinner="计算容量抱团 ...")
 def _crowding() -> pd.DataFrame:
     full_a = _full_a()
@@ -165,6 +218,11 @@ def _rrg_rotation(lookback: int) -> pd.DataFrame:
 @st.cache_data(show_spinner="计算历史风险评分 ...")
 def _risk_score(top_k: int):
     return risk_score_snapshot(top_k=top_k)
+
+
+@st.cache_data(show_spinner="计算信号回测 ...")
+def _signal_backtest(top_k: int):
+    return signal_backtest_snapshot(top_k=top_k)
 
 
 @st.cache_data(show_spinner="构建标签引擎 ...")
@@ -209,12 +267,14 @@ with st.sidebar:
     st.markdown(sidebar_brand(), unsafe_allow_html=True)
     st.markdown("##### Universe")
     u = _universe()
+    full_a_u = _full_a_universe()
     cd = latest_concept_date()
     st.markdown(
-        kpi_card("覆盖股票数", f"{len(u):,}", value_size="sm",
-                 delta=f"Wind 概念缓存 · {cd or 'n/a'}") +
-        kpi_card("概念数", str(sum(len(v) for v in HOT_CONCEPTS.values())),
-                 value_size="sm", delta=f"{len(HOT_CONCEPTS)} 个主题"),
+        kpi_card("全 A 广度", f"{len(full_a_u):,}", value_size="sm",
+                 delta="MST · 涨跌停 · 涨跌家数") +
+        kpi_card("概念覆盖", f"{len(u):,}", value_size="sm",
+                 delta=f"板块/标签 · {sum(len(v) for v in HOT_CONCEPTS.values())} 概念 / "
+                       f"{len(HOT_CONCEPTS)} 主题 · {cd or 'n/a'}"),
         unsafe_allow_html=True,
     )
     st.write("")  # spacer
@@ -234,10 +294,10 @@ last_date_str = (full_a["date"].iloc[-1].date().isoformat()
 
 # 6-phase color mapping
 _PHASE6_KIND = {
-    "上行早期": "accent",
+    "上行初期": "accent",
     "上行中期": "success",
     "上行晚期": "warning",
-    "下行早期": "warning",
+    "下行初期": "warning",
     "下行中期": "danger",
     "下行晚期": "danger",
     "震荡":     "muted",
@@ -250,7 +310,7 @@ phase6_kind = _PHASE6_KIND.get(phase6_label, "muted") if phase6_label else "mute
 st.markdown(
     brand_bar(
         trade_date=last_date_str,
-        n_stocks=len(u),
+        n_stocks=len(full_a_u),
         n_themes=len(HOT_CONCEPTS),
         state=phase6_label,
         state_kind=phase6_kind,
@@ -269,66 +329,68 @@ if snap is not None:
         unsafe_allow_html=True,
     )
 
-    h1, h2, h3 = st.columns([1.1, 1.0, 2.0])
+    h1, h2, h3 = st.columns([1.1, 1.3, 1.9])
 
-    # 1. 当前阶段
+    # 1. 当前阶段 — list all 6+1 phases, highlight the current one + strategy
+    _PHASE_ORDER = ["上行初期", "上行中期", "上行晚期", "震荡",
+                    "下行初期", "下行中期", "下行晚期"]
+    _strategy_color = {"accent": "var(--accent)", "success": "var(--success)",
+                       "warning": "var(--accent)", "danger": "var(--danger)",
+                       "muted": "var(--text-muted)"}.get(phase6_kind, "var(--accent)")
     h1.markdown(
-        kpi_card(
-            "当前阶段",
-            pill(snap.phase_6, kind=phase6_kind, size="lg"),
-            delta=snap.phase_6_strategy,
-        ),
-        unsafe_allow_html=True,
-    )
-
-    # 2. 建议仓位
-    sp = snap.suggested_position
-    hint_lo, hint_hi = snap.phase_6_position_hint
-    h2.markdown(
-        kpi_card(
-            "建议仓位",
-            f"{sp['score']:.0f}%",
-            delta=(
-                f"阶段区间 {hint_lo}-{hint_hi}%  ·  "
-                f"MA {sp['ma_score']:.0f} / MST {sp['mst_score']:.0f} / CCI {sp['cci_score']:.0f}"
-            ),
-            accent=True, value_size="xl",
-        ),
-        unsafe_allow_html=True,
-    )
-
-    # 3. 建议板块 (top 5 SC30+SC3 共振)
-    if snap.suggested_sectors:
-        rows_html = ""
-        for s in snap.suggested_sectors[:5]:
-            ret5 = s.get("ret_5d")
-            ret5s = f"  {ret5:+.1f}%" if ret5 is not None and not pd.isna(ret5) else ""
-            rows_html += (
-                f"<div style='display:flex;justify-content:space-between;align-items:center;"
-                f"padding:5px 0;border-bottom:1px solid var(--border)'>"
-                f"<div>"
-                f"<span style='color:#E8ECF1;font-size:12.5px;font-weight:600'>{s['concept']}</span>"
-                f"  <span style='color:#5F6877;font-size:10.5px;text-transform:uppercase;"
-                f"letter-spacing:0.06em'>{s['theme']}</span></div>"
-                f"<div style='color:#FF7A87;font-size:11.5px;font-weight:600;"
-                f"font-family:JetBrains Mono,monospace;font-variant-numeric:tabular-nums'>"
-                f"SC30 {s['sc30']:.0f} · SC3 {s['sc3']:.0f}{ret5s}</div>"
-                f"</div>"
-            )
-        body_html = f"<div style='margin-top:4px'>{rows_html}</div>"
-    else:
-        body_html = (
-            "<div style='color:#5F6877;padding:18px 0;text-align:center;font-size:12px'>"
-            "no SC30+SC3 resonance</div>"
-        )
-
-    h3.markdown(
         f'<div class="kpi-card">'
-        f'<div class="kpi-label">建议板块 · SC30+SC3 共振向上 Top 5</div>'
-        f'{body_html}'
+        f'<div class="kpi-label">当前阶段</div>'
+        f'{option_track(_PHASE_ORDER, snap.phase_6, kind_map=_PHASE6_KIND)}'
+        f'<div style="margin-top:9px;padding:7px 10px;border-radius:4px;'
+        f'background:color-mix(in srgb, {_strategy_color} 9%, transparent);'
+        f'border-left:2px solid {_strategy_color};color:{_strategy_color};'
+        f'font-size:12px;font-weight:600;line-height:1.45">'
+        f'{snap.phase_6_strategy}</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
+
+    # 2. 建议仓位 — emphasized hero card
+    sp = snap.suggested_position
+    hint_lo, hint_hi = snap.phase_6_position_hint
+    h2.markdown(
+        f'<div class="kpi-card hero">'
+        f'<div class="kpi-label">建议仓位 · suggested position</div>'
+        f'<div class="kpi-value xxl accent" style="color:var(--accent)">{sp["score"]:.0f}%</div>'
+        f'<div class="kpi-delta" style="margin-top:8px;color:var(--text-muted)">'
+        f'阶段区间 {hint_lo}-{hint_hi}%　·　'
+        f'MA {sp["ma_score"]:.0f} / MST {sp["mst_score"]:.0f} / CCI {sp["cci_score"]:.0f}'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    # 3. 建议板块 (top 5 SC30+SC3 共振) — 点开看板块成分股
+    with h3:
+        st.markdown(
+            '<div class="kpi-label" style="margin-bottom:4px">'
+            '建议板块 · SC30+SC3 共振向上 Top 5 · 点开看成分股</div>',
+            unsafe_allow_html=True,
+        )
+        if not snap.suggested_sectors:
+            st.markdown(
+                "<div style='color:#5F6877;padding:18px 0;text-align:center;"
+                "font-size:12px'>no SC30+SC3 resonance</div>",
+                unsafe_allow_html=True,
+            )
+        for s in snap.suggested_sectors[:5]:
+            ret5 = s.get("ret_5d")
+            ret5s = (f"  ·  5日 {ret5:+.1f}%"
+                     if ret5 is not None and not pd.isna(ret5) else "")
+            icon = concept_icon(s["concept"], s.get("theme"))
+            title = (f"{icon}  {s['concept']}　SC30 {s['sc30']:.0f} · SC3 {s['sc3']:.0f}"
+                     f"{ret5s}　［{s['theme']}］")
+            with st.expander(title):
+                detail = _sector_constituents(s["concept"])
+                if detail.empty:
+                    st.caption("无成分股数据")
+                else:
+                    st.markdown(_constituent_table_html(detail),
+                                unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +402,7 @@ main_tabs = st.tabs(["市场", "个股"])
 with main_tabs[0]:
     # --- Market vitals strip ---
     close_panel = _close_panel()
-    codes_for_lim = tuple(_universe())
+    codes_for_lim = tuple(_full_a_universe())
     liq_score = float(liquidity_score(full_a.set_index("date")["amt"], 252).iloc[-1])
     liq_amt_yi = float(full_a["amt"].iloc[-1]) / 1e8
     mst_df = mst(close_panel, windows=(5, 13, 50))
@@ -476,79 +538,162 @@ with main_tabs[0]:
                 unsafe_allow_html=True,
             )
 
-            # ---------- 历史风险评分 ----------
+            # ---------- 市场风险评分 ----------
             st.markdown(
-                section_header("历史风险评分", "KNN over historical feature snapshots"),
+                section_header("市场风险评分", "Per-indicator conditional backtest + KNN"),
                 unsafe_allow_html=True,
             )
-            top_k = st.slider("Top-K 相似历史日", min_value=10, max_value=80,
+            top_k = st.slider("KNN Top-K 相似历史日", min_value=10, max_value=80,
                               value=30, step=5, key="risk_topk")
-            rs = _risk_score(int(top_k))
-            if rs is None:
+            sbt = _signal_backtest(int(top_k))
+
+            if sbt is None:
                 st.info("无历史特征可计算风险评分。")
             else:
-                light = risk_light_from_stats(rs.horizons)
-                light_kind = {"红": "danger", "黄": "warning", "绿": "success", "n/a": "muted"}.get(light, "muted")
+                # --- KPI summary row ---
+                s5  = sbt.knn_stats.get("5d", {})
+                s20 = sbt.knn_stats.get("20d", {})
+                win5  = s5.get("win_rate", float("nan"))
+                mean5 = s5.get("mean", float("nan"))
+                win20 = s20.get("win_rate", float("nan"))
+                mean20 = s20.get("mean", float("nan"))
+                pay5  = s5.get("payoff", float("nan"))
 
-                r1, r2, r3, r4 = st.columns(4)
-                r1.markdown(
-                    kpi_card(
-                        "风险灯",
-                        pill(light, kind=light_kind, size="lg"),
-                        delta=f"基于 {rs.n_similar} 个最相似历史日",
-                    ),
+                light = risk_light_from_stats(sbt.knn_stats)
+                light_kind = {"红": "danger", "黄": "warning", "绿": "success",
+                               "n/a": "muted"}.get(light, "muted")
+
+                phase_bt = sbt.phase_backtest
+                phase_label = phase_bt.get("phase", "—")
+                phase_n = phase_bt.get("n", 0)
+                phase_s5 = phase_bt.get("stats", {}).get("5d", {})
+                phase_win5 = phase_s5.get("win_rate", float("nan"))
+
+                ck1, ck2, ck3, ck4 = st.columns(4)
+                ck1.markdown(
+                    f'<div class="kpi-card">'
+                    f'<div class="kpi-label">KNN 风险灯</div>'
+                    f'{option_track(["绿", "黄", "红"], light, vertical=False, kind_map={"绿": "success", "黄": "warning", "红": "danger"})}'
+                    f'<div class="kpi-delta muted" style="margin-top:7px">'
+                    f'Top-{sbt.knn_n} 相似历史日</div>'
+                    f'</div>',
                     unsafe_allow_html=True,
                 )
-                for col, h in zip((r2, r3, r4), ("1d", "5d", "20d")):
-                    s = rs.horizons[h]
-                    win = s.get("win_rate", float("nan"))
-                    mean = s.get("mean", float("nan"))
-                    win_kind = ("up" if not pd.isna(win) and win >= 55
-                                else "down" if not pd.isna(win) and win < 45
-                                else "muted")
-                    col.markdown(
-                        kpi_card(
-                            f"T+{h} 胜率",
-                            f"{win:.1f}%" if not pd.isna(win) else "—",
-                            delta=(f"均值 {mean:+.2f}%  ·  "
-                                    f"中位 {s.get('median', float('nan')):+.2f}%"
-                                    if not pd.isna(mean) else "n/a"),
-                            delta_kind=win_kind,
-                            accent=(h == "5d"),
-                        ),
-                        unsafe_allow_html=True,
-                    )
+                ck2.markdown(kpi_card(
+                    "KNN 5日胜率",
+                    f"{win5:.1f}%" if not pd.isna(win5) else "—",
+                    delta=f"均值 {mean5:+.2f}%  赔权 {pay5:.2f}" if not pd.isna(mean5) else "",
+                    delta_kind=("up" if not pd.isna(win5) and win5 >= 55
+                                else "down" if not pd.isna(win5) and win5 < 45 else "muted"),
+                    accent=True,
+                ), unsafe_allow_html=True)
+                ck3.markdown(kpi_card(
+                    "KNN 20日胜率",
+                    f"{win20:.1f}%" if not pd.isna(win20) else "—",
+                    delta=f"均值 {mean20:+.2f}%" if not pd.isna(mean20) else "",
+                    delta_kind=("up" if not pd.isna(win20) and win20 >= 55
+                                else "down" if not pd.isna(win20) and win20 < 45 else "muted"),
+                ), unsafe_allow_html=True)
+                ck4.markdown(kpi_card(
+                    f"阶段回测 · {phase_label}",
+                    f"{phase_win5:.1f}%" if not pd.isna(phase_win5) else "—",
+                    delta=f"5日胜率 · 历史 {phase_n} 天",
+                    delta_kind=("up" if not pd.isna(phase_win5) and phase_win5 >= 55
+                                else "down" if not pd.isna(phase_win5) and phase_win5 < 45 else "muted"),
+                ), unsafe_allow_html=True)
 
-                with st.expander(f"Top 15 最相似历史日（含未来 T+1/T+5/T+20 收益）"):
-                    sim_df = pd.DataFrame(rs.similar_days)
-                    sim_df = sim_df.rename(columns={
-                        "distance": "距离",
-                        "market_sc30": "SC30",
-                        "cci84": "CCI84",
-                        "MST_5": "MST5",
-                        "breadth_ratio": "breadth",
-                        "liquidity_score": "流动性",
-                        "ret_1d": "T+1 (%)",
-                        "ret_5d": "T+5 (%)",
-                        "ret_20d": "T+20 (%)",
+                st.markdown("&nbsp;", unsafe_allow_html=True)
+
+                # --- Per-indicator backtest table ---
+                bt_df = backtest_table_df(sbt)
+
+                def _style_winrate(val):
+                    if pd.isna(val):
+                        return ""
+                    if val >= 60:
+                        return "background-color: rgba(230,57,70,0.25); color: #E63946"
+                    if val <= 45:
+                        return "background-color: rgba(6,167,125,0.25); color: #06A77D"
+                    return "color: #E8ECF1"
+
+                def _style_payoff(val):
+                    if pd.isna(val):
+                        return ""
+                    if val >= 1.5:
+                        return "color: #FFB000; font-weight:600"
+                    if val < 0.7:
+                        return "color: #06A77D"
+                    return ""
+
+                def _style_mean(val):
+                    if pd.isna(val):
+                        return ""
+                    if val >= 0.5:
+                        return "color: #E63946"
+                    if val <= -0.5:
+                        return "color: #06A77D"
+                    return ""
+
+                sty = (
+                    bt_df.style
+                    .applymap(_style_winrate, subset=["1d胜率%", "5d胜率%", "20d胜率%"])
+                    .applymap(_style_payoff, subset=["1d赔权", "5d赔权", "20d赔权"])
+                    .applymap(_style_mean, subset=["20d均值%"])
+                    .format({
+                        "1d胜率%":  lambda v: f"{v:.1f}%" if not pd.isna(v) else "—",
+                        "1d赔权":   lambda v: f"{v:.2f}"  if not pd.isna(v) else "—",
+                        "5d胜率%":  lambda v: f"{v:.1f}%" if not pd.isna(v) else "—",
+                        "5d赔权":   lambda v: f"{v:.2f}"  if not pd.isna(v) else "—",
+                        "20d胜率%": lambda v: f"{v:.1f}%" if not pd.isna(v) else "—",
+                        "20d均值%": lambda v: f"{v:+.2f}%" if not pd.isna(v) else "—",
+                        "20d赔权":  lambda v: f"{v:.2f}"  if not pd.isna(v) else "—",
+                        "样本":     "{:.0f}",
                     })
-                    sty = sim_df.style \
-                        .background_gradient(subset=["T+1 (%)", "T+5 (%)", "T+20 (%)"],
-                                              cmap="RdYlGn_r", vmin=-8, vmax=8) \
-                        .background_gradient(subset=["距离"], cmap="Blues", vmin=0, vmax=3) \
-                        .format({"距离": "{:.2f}", "SC30": "{:.0f}", "CCI84": "{:.0f}",
-                                 "MST5": "{:.0f}", "breadth": "{:.2f}",
-                                 "流动性": "{:.0f}",
-                                 "T+1 (%)": "{:+.2f}",
-                                 "T+5 (%)": "{:+.2f}",
-                                 "T+20 (%)": "{:+.2f}"})
-                    st.dataframe(sty, width="stretch", hide_index=True, height=460)
+                )
+                st.dataframe(sty, use_container_width=True, hide_index=True)
+
+                # --- Similar days expander ---
+                rs = _risk_score(int(top_k))
+                if rs is not None:
+                    with st.expander(f"Top 15 最相似历史日（T+1/T+5/T+20 收益）"):
+                        sim_df = pd.DataFrame(rs.similar_days)
+                        sim_df = sim_df.rename(columns={
+                            "distance": "距离",
+                            "market_sc30": "SC30",
+                            "cci14": "CCI14",
+                            "cci84": "CCI84",
+                            "MST_5": "MST5",
+                            "breadth_ratio": "breadth",
+                            "liquidity_score": "流动性",
+                            "ret_1d": "T+1 (%)",
+                            "ret_5d": "T+5 (%)",
+                            "ret_20d": "T+20 (%)",
+                        })
+                        sim_cols = [c for c in sim_df.columns if c in
+                                    ["date", "距离", "SC30", "CCI14", "CCI84",
+                                     "MST5", "breadth", "流动性",
+                                     "T+1 (%)", "T+5 (%)", "T+20 (%)"]]
+                        sim_df = sim_df[sim_cols]
+                        fmt_map = {"距离": "{:.2f}", "SC30": "{:.0f}",
+                                   "CCI14": "{:.0f}", "CCI84": "{:.0f}",
+                                   "MST5": "{:.0f}", "breadth": "{:.2f}",
+                                   "流动性": "{:.0f}",
+                                   "T+1 (%)": "{:+.2f}", "T+5 (%)": "{:+.2f}",
+                                   "T+20 (%)": "{:+.2f}"}
+                        fmt_map = {k: v for k, v in fmt_map.items() if k in sim_df.columns}
+                        ret_cols = [c for c in ["T+1 (%)", "T+5 (%)", "T+20 (%)"]
+                                    if c in sim_df.columns]
+                        sty2 = sim_df.style \
+                            .background_gradient(subset=ret_cols, cmap="RdYlGn_r",
+                                                  vmin=-8, vmax=8) \
+                            .format(fmt_map)
+                        st.dataframe(sty2, use_container_width=True, hide_index=True, height=460)
 
                 st.caption(
-                    "**方法**: 把今日 8 维特征（market_sc30 + 5日Mom + MST5/13/50 + "
-                    "CCI84 + breadth + 流动性）做 z-score 标准化，按欧氏距离在历史日中找最相似的 Top-K。"
+                    "**方法**: 把今日特征（SC30 + 5日Mom + MST5/13/50 + CCI短/长 + breadth + 流动性）"
+                    "做 z-score 标准化，按欧氏距离在历史日中找最相似的 Top-K。"
                     "**胜率** = 这 K 个历史日 T+N 全A 涨幅 > 0 的比例。"
-                    "**剔除** 最近 30 个交易日，避免与当前窗口重叠。"
+                    "**赔权** = 盈利均值 / |亏损均值|。**剔除**最近 30 个交易日避免窗口重叠。"
                 )
 
             st.markdown(
@@ -558,10 +703,10 @@ with main_tabs[0]:
             st.markdown(
                 "- **市场 SC30** = 万得全A 收盘的 30 日 RSV，对标原始框架 SC30 中期\n"
                 "- **6 阶段判定**（基于 SC30 + 5日Mom + CCI84 + breadth + 流动性）：\n"
-                "  - 上行早期：SC30 < 50，但 5日Mom > 0 且 breadth > 1.0\n"
+                "  - 上行初期：SC30 < 50，但 5日Mom > 0 且 breadth > 1.0\n"
                 "  - 上行中期：SC30 ∈ [50, 75)，5日Mom > 0\n"
                 "  - 上行晚期：SC30 ≥ 75，**或** CCI84 > 120 且 breadth < 1.0\n"
-                "  - 下行早期：SC30 < 55 且 breadth < 1.0\n"
+                "  - 下行初期：SC30 < 55 且 breadth < 1.0\n"
                 "  - 下行中期：SC30 < 40 且 流动性 < 45\n"
                 "  - 下行晚期：SC30 < 25 且 breadth < 0.5\n"
                 "- **建议仓位** = 0.5 × MA矩阵 + 0.3 × MST + 0.2 × CCI（PDF §7 基础+弹性融合）\n"
@@ -831,8 +976,17 @@ with main_tabs[0]:
                 unsafe_allow_html=True,
             )
 
+            # Critical (about-to-flip) count
+            n_crit = int(rot_df.get("critical", pd.Series(dtype=bool)).sum())
+            if n_crit:
+                st.markdown(
+                    f"<div style='color:#FFC74D;font-size:12px;margin:2px 0 6px'>"
+                    f"⚠ {n_crit} 个板块处于<b>临界</b>：某一坐标轴贴近 0，再走一步就会切换操作标签</div>",
+                    unsafe_allow_html=True,
+                )
+
             # Filters
-            f1, f2 = st.columns([1, 1])
+            f1, f2, f3 = st.columns([1, 1, 1])
             sel_theme = f1.multiselect(
                 "主题筛选",
                 sorted(rot_df["theme"].dropna().unique()),
@@ -843,15 +997,30 @@ with main_tabs[0]:
                 ["趋势买入", "左侧布局", "止盈减仓", "回避"],
                 key="rrg_rot_label",
             )
+            f3.write("")
+            only_crit = f3.checkbox("只看临界", key="rrg_rot_crit")
             view = rot_df
             if sel_theme:
                 view = view[view["theme"].isin(sel_theme)]
             if sel_label:
                 view = view[view["rotation_label"].isin(sel_label)]
+            if only_crit:
+                view = view[view["critical"] == True]  # noqa: E712
 
-            # Render styled table
-            show_cols = ["theme", "concept", "rotation_label", "prior_quadrant",
-                         "quadrant", "direction", "rs_ratio", "rs_momentum", "ret_5d"]
+            # Render styled table — 临界 shows the label it would flip to
+            view = view.copy()
+            view["临界"] = view.apply(
+                lambda r: f"⚠ →{r['critical_to']}"
+                if r.get("critical") and r.get("critical_to") else "",
+                axis=1,
+            )
+            view["concept"] = view.apply(
+                lambda r: f"{concept_icon(r['concept'], r.get('theme'))} {r['concept']}",
+                axis=1,
+            )
+            show_cols = ["theme", "concept", "rotation_label", "临界",
+                         "prior_quadrant", "quadrant", "direction",
+                         "rs_ratio", "rs_momentum", "ret_1d", "ret_5d"]
             disp = view[show_cols].rename(columns={
                 "theme": "主题",
                 "concept": "概念",
@@ -861,6 +1030,7 @@ with main_tabs[0]:
                 "direction": "动向",
                 "rs_ratio": "RS-Ratio",
                 "rs_momentum": "RS-Mom",
+                "ret_1d": "今日(%)",
                 "ret_5d": "5日(%)",
             })
 
@@ -884,20 +1054,25 @@ with main_tabs[0]:
             }
             sty = disp.style \
                 .applymap(lambda v: label_color.get(v, ""), subset=["操作"]) \
+                .applymap(lambda v: ("background-color: rgba(255,176,0,0.18); "
+                                      "color:#FFC74D; font-weight:600") if v else "",
+                          subset=["临界"]) \
                 .applymap(lambda v: quadrant_color.get(v, ""),
                           subset=[f"{lookback}日前", "当前"]) \
                 .applymap(lambda v: direction_color.get(v, ""), subset=["动向"]) \
                 .background_gradient(subset=["RS-Ratio", "RS-Mom"],
                                       cmap="RdYlGn_r", vmin=-3, vmax=3) \
-                .background_gradient(subset=["5日(%)"], cmap="RdYlGn_r", vmin=-10, vmax=10) \
-                .format({"RS-Ratio": "{:.2f}", "RS-Mom": "{:.2f}", "5日(%)": "{:.2f}"})
+                .background_gradient(subset=["今日(%)", "5日(%)"],
+                                      cmap="RdYlGn_r", vmin=-10, vmax=10) \
+                .format({"RS-Ratio": "{:.2f}", "RS-Mom": "{:.2f}",
+                         "今日(%)": "{:.2f}", "5日(%)": "{:.2f}"})
             st.dataframe(sty, width="stretch", hide_index=True, height=560)
 
             st.caption(
                 "**操作标签** 由当前象限决定：领涨→趋势买入 · 转强→左侧布局 · 转弱→止盈减仓 · 落后→回避。"
+                "**临界** = RS-Ratio 或 RS-Mom 贴近 0（±0.35），再走一步就会切换象限；箭头指向即将变成的操作。"
                 f"**动向** 比较 {lookback} 日前与今日的象限质量（领涨>转强>转弱>落后）。"
-                "**RS-Ratio** = (板块/沪深300) 60 日滚动 Z-score。"
-                "**RS-Mom** = RS-Ratio 5 日变化的 60 日滚动 Z-score。"
+                "象限基于相对沪深300的 60 日中期强度，单日涨跌（见 今日%）通常不会立刻翻转标签。"
             )
 
 

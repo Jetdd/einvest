@@ -12,6 +12,9 @@ TAG_DIR = DATA_ROOT / "tags"
 SECTOR_FEATURE_DAILY = FEATURE_DIR / "sector_feature_daily.parquet"
 STOCK_TAG_SNAPSHOT = TAG_DIR / "stock_tag_snapshot.parquet"
 MARKET_STATE_DAILY = FEATURE_DIR / "market_state_daily.parquet"
+# Persisted full A-share universe (live codes), written by scripts/update_daily.py.
+# Used for whole-market breadth / MST / 涨跌停 (vs the hot-concept universe).
+FULL_A_UNIVERSE = DATA_ROOT / "meta" / "symbols" / "full_a_universe.parquet"
 
 # einvest project paths
 PROJECT_ROOT = Path(r"C:\projects\einvest")

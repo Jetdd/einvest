@@ -44,8 +44,12 @@ def mst(close_panel: pd.DataFrame, windows: tuple[int, ...] = (5, 13, 50)) -> pd
 # ---------------------------------------------------------------------------
 
 def up_down_count(close_panel: pd.DataFrame) -> pd.DataFrame:
-    """Per-date up_count / down_count / flat_count using close vs previous close."""
-    ret = close_panel.pct_change()
+    """Per-date up_count / down_count / flat_count using close vs previous close.
+
+    `fill_method=None` so a stock missing the latest bar yields NaN (excluded)
+    rather than being forward-filled to a 0% change and mis-counted as 平盘.
+    """
+    ret = close_panel.pct_change(fill_method=None)
     up = (ret > 0).sum(axis=1).astype(int)
     down = (ret < 0).sum(axis=1).astype(int)
     flat = (ret == 0).sum(axis=1).astype(int)

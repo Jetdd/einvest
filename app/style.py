@@ -177,6 +177,14 @@ header[data-testid="stHeader"] { background: transparent; height: 0; }
 }
 .kpi-value.sm { font-size: 16px; }
 .kpi-value.xl { font-size: 28px; font-weight: 700; }
+.kpi-value.xxl { font-size: 44px; font-weight: 800; letter-spacing: -0.02em; }
+/* emphasized hero card — for 建议仓位 */
+.kpi-card.hero {
+  padding: 18px 20px;
+  background: linear-gradient(180deg, rgba(255,176,0,0.07), rgba(255,176,0,0.015));
+  border: 1px solid var(--accent-dim);
+  border-left: 3px solid var(--accent);
+}
 .kpi-delta {
   font-size: 11px;
   color: var(--text-subtle);
@@ -228,18 +236,25 @@ header[data-testid="stHeader"] { background: transparent; height: 0; }
    Section header
    ──────────────────────────────────────────────────────────────────────── */
 .section-h {
-  display: flex; align-items: baseline; gap: 14px;
-  margin: 22px 0 10px 0;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border);
+  display: flex; align-items: baseline; gap: 12px;
+  margin: 28px 0 13px 0;
+  padding: 0 0 7px 11px;
+  border-bottom: 1px solid var(--border-strong);
+  position: relative;
+}
+.section-h::before {
+  content: "";
+  position: absolute; left: 0; top: 2px; bottom: 8px;
+  width: 3px; border-radius: 2px;
+  background: var(--accent);
 }
 .section-h .section-title {
-  font-size: 12px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.16em;
+  font-size: 15px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.13em;
   color: var(--text);
 }
 .section-h .section-sub {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--text-subtle);
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -513,6 +528,58 @@ def risk_dot(level: str) -> str:
     return f'<span class="dot dot-{color}"></span>'
 
 
+_KIND_COLOR = {
+    "success": "var(--success)", "danger": "var(--danger)",
+    "warning": "var(--warning)", "accent": "var(--accent)",
+    "muted": "var(--text-muted)",
+}
+
+
+def option_track(options: list[str], active: str, *,
+                 kind_map: dict[str, str] | None = None,
+                 default_kind: str = "accent",
+                 vertical: bool = True) -> str:
+    """Render every option in `options`, highlighting the `active` one and
+    dimming the rest. `kind_map` colors each option (success|warning|danger|
+    accent|muted); the active chip uses its kind color, others are muted.
+
+    Use vertical=True for a stacked list (e.g. cycle phases), False for a row
+    (e.g. risk lights).
+    """
+    kind_map = kind_map or {}
+    chips: list[str] = []
+    for opt in options:
+        is_active = (opt == active)
+        color = _KIND_COLOR.get(kind_map.get(opt, default_kind), "var(--accent)")
+        if is_active:
+            dot = (f'<span style="display:inline-block;width:7px;height:7px;'
+                   f'border-radius:50%;background:{color};margin-right:9px;'
+                   f'box-shadow:0 0 8px {color}"></span>')
+            bg = f'color-mix(in srgb, {color} 13%, transparent)'
+            bd = f'color-mix(in srgb, {color} 45%, transparent)'
+            chips.append(
+                f'<div style="display:flex;align-items:center;padding:6px 11px;'
+                f'border-radius:5px;background:{bg};'
+                f'border:1px solid {bd};border-left:3px solid {color};'
+                f'margin:3px 0">'
+                f'{dot}<span style="color:{color};font-size:14.5px;'
+                f'font-weight:800;letter-spacing:0.02em">{opt}</span></div>'
+            )
+        else:
+            chips.append(
+                f'<div style="display:flex;align-items:center;padding:3px 9px;'
+                f'margin:2px 0">'
+                f'<span style="display:inline-block;width:6px;height:6px;'
+                f'border-radius:50%;background:transparent;'
+                f'border:1px solid var(--border);margin-right:7px"></span>'
+                f'<span style="color:var(--text-muted);font-size:12px;'
+                f'font-weight:500">{opt}</span></div>'
+            )
+    if vertical:
+        return f'<div style="margin-top:2px">{"".join(chips)}</div>'
+    return f'<div style="display:flex;gap:7px;margin-top:4px;flex-wrap:wrap">{"".join(chips)}</div>'
+
+
 def progress_row(name: str, value: float, *, sub: str | None = None,
                   total: float = 100.0, kind: str = "accent") -> str:
     """Horizontal progress bar with label + value. `kind` ∈ accent|success|warning|danger."""
@@ -529,6 +596,61 @@ def progress_row(name: str, value: float, *, sub: str | None = None,
         f'style="width:{pct:.1f}%"></div></div>'
         f'</div>'
     )
+
+
+# Concept → emoji icon. First keyword hit wins; theme is the fallback.
+_ICON_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
+    (("煤炭", "焦炭"), "⛏️"),
+    (("石油", "油气", "油服", "天然气", "石化"), "🛢️"),
+    (("光伏", "HJT", "BC电池"), "☀️"),
+    (("风电",), "🌬️"),
+    (("储能", "电池", "锂", "固态"), "🔋"),
+    (("稀土", "永磁"), "🧲"),
+    (("黄金", "贵金属", "珠宝"), "🥇"),
+    (("钢", "工业金属", "有色", "铜"), "🏗️"),
+    (("化工", "化学", "材料", "PEEK"), "⚗️"),
+    (("机器人", "具身", "宇树"), "🤖"),
+    (("减速器", "工程机械"), "⚙️"),
+    (("光模块", "CPO", "光通信", "光芯片", "光电", "液冷", "铜缆"), "💡"),
+    (("存储", "HBM", "长鑫"), "💾"),
+    (("芯片", "半导体", "晶圆", "光刻", "封装", "EDA", "GPU", "ASIC", "MCU", "模拟"), "🔌"),
+    (("AI", "智能体", "多模态", "算力", "英伟达", "AIGC", "AIPC"), "🧠"),
+    (("卫星", "航天", "导航", "互联网"), "🛰️"),
+    (("军工",), "🛡️"),
+    (("低空", "无人机"), "🚁"),
+    (("核聚变", "核电", "可控核"), "☢️"),
+    (("量子",), "⚛️"),
+    (("创新药", "仿制药", "疫苗", "CXO", "医疗", "器械", "减肥药"), "💊"),
+    (("医美",), "💄"),
+    (("宠物",), "🐾"),
+    (("酒", "白酒"), "🍶"),
+    (("食品", "饮料", "预制菜"), "🍱"),
+    (("游戏", "短剧"), "🎮"),
+    (("影视", "院线"), "🎬"),
+    (("汽车", "华为汽车", "车路云"), "🚗"),
+    (("数据", "数字", "信创", "元宇宙", "云计算"), "💻"),
+    (("消费电子", "手机", "谷子", "零售", "婴童"), "🛍️"),
+    (("航运", "港口", "船"), "🚢"),
+    (("旅游",), "✈️"),
+    (("猪", "养殖", "种植", "饲料", "农"), "🌾"),
+]
+
+_ICON_THEME: dict[str, str] = {
+    "光通信/CPO": "💡", "存储": "💾", "机器人": "🤖", "半导体": "🔌",
+    "AI算力": "🧠", "新能源": "🔋", "军工航天": "🛰️", "医药消费": "💊",
+    "数字经济": "💻", "资源": "⛏️", "其他主线": "✨",
+}
+
+
+def concept_icon(concept: str | None, theme: str | None = None) -> str:
+    """Small emoji icon for a concept/sector (keyword match, theme fallback)."""
+    name = concept or ""
+    for keys, icon in _ICON_KEYWORDS:
+        if any(k in name for k in keys):
+            return icon
+    if theme and theme in _ICON_THEME:
+        return _ICON_THEME[theme]
+    return "▪"
 
 
 def section_header(title: str, sub: str | None = None) -> str:

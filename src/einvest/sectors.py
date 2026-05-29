@@ -138,5 +138,7 @@ BENCHMARKS: dict[str, str] = {
 # All indices that should be downloaded by scripts/fetch_indices.py
 ALL_INDICES: dict[str, str] = {**MAIN_INDICES, **BENCHMARKS}
 
-# Wind 万得全A — for whole-market amount / liquidity
-FULL_A_WIND = "8841388.WI"
+# Wind 万得全A — for whole-market amount / liquidity / SC30 SC3
+# 881001.WI is the standard 万得全A index. (The previous 8841388.WI was a
+# different, wrong series and produced spurious 30日新低 SC30/SC3 readings.)
+FULL_A_WIND = "881001.WI"

@@ -81,6 +81,32 @@ ROTATION_LABEL: dict[str, str] = {
 _QUADRANT_RANK: dict[str, int] = {"领涨": 3, "转强": 2, "转弱": 1, "落后": 0, "n/a": -1}
 
 
+# A concept is 临界 (on the edge) when one RRG axis sits within ±band of 0,
+# so one more session can flip the quadrant — and thus the operation label.
+CRITICAL_BAND = 0.35
+
+
+def rotation_critical(rs: float, mom: float) -> tuple[bool, str]:
+    """Whether (rs, mom) sits near a quadrant boundary.
+
+    Returns (is_critical, would-be label) — the operation label the concept
+    would take if the nearest-to-zero axis flips sign. Since each quadrant maps
+    to a distinct label, the would-be label always differs from the current one.
+    """
+    if pd.isna(rs) or pd.isna(mom):
+        return False, ""
+    near_mom = abs(mom) < CRITICAL_BAND
+    near_rs = abs(rs) < CRITICAL_BAND
+    if not (near_mom or near_rs):
+        return False, ""
+    # Flip whichever axis is closest to its zero boundary.
+    if near_mom and (not near_rs or abs(mom) <= abs(rs)):
+        new_q = classify_quadrant(rs, -1.0 if mom >= 0 else 1.0)
+    else:
+        new_q = classify_quadrant(-1.0 if rs >= 0 else 1.0, mom)
+    return True, ROTATION_LABEL.get(new_q, "—")
+
+
 def rotation_direction(prior: str, current: str) -> str:
     """Improvement direction between two quadrants.
 
@@ -208,6 +234,10 @@ def rrg_rotation_table(
 
         ret_5d = (float(s.iloc[-1] / s.iloc[-6] - 1) * 100
                   if len(s) > 5 else float("nan"))
+        ret_1d = (float(s.iloc[-1] / s.iloc[-2] - 1) * 100
+                  if len(s) > 1 else float("nan"))
+
+        is_crit, crit_to = rotation_critical(cur_rs, cur_mom)
 
         rows.append({
             "theme": theme_lookup.get(concept),
@@ -218,6 +248,9 @@ def rrg_rotation_table(
             "prior_quadrant": prior_q,
             "direction": rotation_direction(prior_q, curr_q),
             "rotation_label": ROTATION_LABEL.get(curr_q, "—"),
+            "critical": is_crit,
+            "critical_to": crit_to,
+            "ret_1d": round(ret_1d, 2) if not pd.isna(ret_1d) else None,
             "ret_5d": round(ret_5d, 2) if not pd.isna(ret_5d) else None,
         })
     df = pd.DataFrame(rows)

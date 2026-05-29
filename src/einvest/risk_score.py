@@ -26,7 +26,7 @@ from .indicators.breadth import mst, up_down_count
 from .indicators.cci import cci
 from .indicators.liquidity import liquidity_score
 from .indicators.sc import rsv
-from .io import load_close_panel, load_full_a, load_index, universe
+from .io import full_a_universe, load_close_panel, load_full_a, load_index
 
 
 FEATURES = [
@@ -35,6 +35,7 @@ FEATURES = [
     "MST_5",
     "MST_13",
     "MST_50",
+    "cci14",
     "cci84",
     "breadth_ratio",
     "liquidity_score",
@@ -61,21 +62,25 @@ def _feature_panel(*, sh_code: str = "000001.XSHG") -> pd.DataFrame:
     full_a_dated = full_a.set_index("date").sort_index()
     close = full_a_dated["close"]
     amt = full_a_dated["amt"]
+    low = full_a_dated["low"] if "low" in full_a_dated.columns else None
+    high = full_a_dated["high"] if "high" in full_a_dated.columns else None
 
-    # Market-wide SC30 (RSV30 of 万得全A close)
-    market_sc30 = rsv(close, 30).rename("market_sc30")
+    # Market-wide SC30 (RSV30 of 万得全A, OHLC per framework primary definition)
+    market_sc30 = rsv(close, 30, low=low, high=high).rename("market_sc30")
     market_sc30_5d_mom = market_sc30.diff(5).rename("market_sc30_5d_mom")
 
     # MST per the breadth module
-    close_panel = load_close_panel(universe())
+    close_panel = load_close_panel(full_a_universe())
     mst_df = mst(close_panel, windows=(5, 13, 50))  # columns: MST_5/13/50
 
-    # CCI84 on 上证 (PDF default)
+    # CCI on 上证: short (14) + long (84)
     sh = load_index(sh_code)
     if sh.empty:
+        cci14 = pd.Series(name="cci14", dtype=float)
         cci84 = pd.Series(name="cci84", dtype=float)
     else:
         sh_dated = sh.set_index("date").sort_index()
+        cci14 = cci(sh_dated, 14).rename("cci14")
         cci84 = cci(sh_dated, 84).rename("cci84")
 
     # Breadth ratio from universe close panel
@@ -91,7 +96,7 @@ def _feature_panel(*, sh_code: str = "000001.XSHG") -> pd.DataFrame:
         fwd[f"ret_{h}d"] = (close.shift(-h) / close - 1) * 100
 
     df = pd.concat(
-        [market_sc30, market_sc30_5d_mom, mst_df, cci84, breadth_ratio, liq, fwd],
+        [market_sc30, market_sc30_5d_mom, mst_df, cci14, cci84, breadth_ratio, liq, fwd],
         axis=1,
     )
     df.index = pd.to_datetime(df.index)
@@ -207,6 +212,7 @@ def risk_score_snapshot(*, top_k: int = 30,
             "date": d.date().isoformat(),
             "distance": round(float(r["distance"]), 3),
             "market_sc30": round(float(r["market_sc30"]), 1),
+            "cci14": round(float(r["cci14"]), 1) if not pd.isna(r.get("cci14", float("nan"))) else None,
             "cci84": round(float(r["cci84"]), 1),
             "MST_5": round(float(r["MST_5"]), 1),
             "breadth_ratio": round(float(r["breadth_ratio"]), 2),
