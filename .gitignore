@@ -40,8 +40,10 @@ Thumbs.db
 _*.py
 _*.txt
 
-# Streamlit
+# Secrets
 .streamlit/secrets.toml
+secrets_local.py
+**/secrets_local.py
 
 # Doc (PDFs may be large)
 doc/*.pdf
