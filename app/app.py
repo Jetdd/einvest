@@ -30,7 +30,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from einvest.config import STOCK_DIR
+from einvest.config import PROJECT_ROOT, STOCK_DIR
 from einvest.cycle import cycle_detail_latest
 from einvest.heatmap import band, heatmap_latest, heatmap_history
 from einvest.indicators import (
@@ -175,6 +175,24 @@ def _sector_constituents(concept: str) -> pd.DataFrame:
     return d
 
 
+@st.cache_data(show_spinner=False)
+def _chain_concepts() -> list[str]:
+    from einvest.sector import available_chains
+    return available_chains()
+
+
+@st.cache_data(show_spinner=False)
+def _poster_b64(path_str: str) -> str:
+    import base64
+    return base64.b64encode(Path(path_str).read_bytes()).decode()
+
+
+@st.cache_data(show_spinner="计算产业链强度 ...")
+def _chain_strength(concept: str):
+    from einvest.sector import chain_with_strength
+    return chain_with_strength(concept)
+
+
 def _constituent_table_html(detail: pd.DataFrame) -> str:
     """Compact 红涨绿跌 table (名称/代码/收盘/涨跌幅%) that fits a narrow column."""
     rows = ""
@@ -197,6 +215,102 @@ def _constituent_table_html(detail: pd.DataFrame) -> str:
             f"<div style='color:#5F6877;font-size:10px;text-transform:uppercase;"
             f"letter-spacing:0.06em;padding:2px'>{len(detail)} 只成分股 · 按涨跌幅排序</div>"
             f"{rows}</div>")
+
+
+def _ret_tint(r: float | None, alpha_max: float = 0.20) -> tuple[str, str]:
+    """(background, text-color) for a return — 红涨绿跌, intensity by magnitude."""
+    if r is None:
+        return "transparent", "#5F6877"
+    color = "#E63946" if r > 0 else "#06A77D" if r < 0 else "#9BA4B0"
+    a = min(abs(r) / 6.0, 1.0) * alpha_max
+    return f"color-mix(in srgb, {color} {a*100:.0f}%, transparent)", color
+
+
+def _render_chain_html(data: dict) -> str:
+    """3-tier industry-chain grid; each segment tinted by today's strength."""
+    tiers = data.get("chain") or {}
+    n = len(tiers)
+    blocks = ""
+    for ti, (tier, segs) in enumerate(tiers.items()):
+        cards = ""
+        for seg in segs or []:
+            s = seg.get("strength", {})
+            r = s.get("ret_1d")
+            bg, color = _ret_tint(r)
+            ret_html = (f"<span class='seg-ret' style='color:{color}'>{r:+.2f}%</span>"
+                        if r is not None else "")
+            chips = ""
+            for c in s.get("companies", []):
+                cr = c["ret_1d"]
+                cc = "#F0616D" if cr > 0 else "#35B97F" if cr < 0 else "#9BA4B0"
+                chips += (f"<span class='chain-chip'>{c['name']} "
+                          f"<span style='color:{cc}'>{cr:+.1f}%</span></span>")
+            r5 = s.get("ret_5d")
+            sub = (f"{s.get('n', 0)}只 · 5日 {r5:+.1f}%"
+                   if r5 is not None else f"{s.get('n', 0)}只")
+            cards += (
+                f"<div class='seg-card' style='background:{bg};border-top:2px solid {color}'>"
+                f"<div class='seg-head'><span class='seg-name'>{seg['segment']}</span>{ret_html}</div>"
+                f"<div class='seg-sub'>{sub}</div>"
+                f"<div class='seg-chips'>{chips}</div>"
+                f"</div>"
+            )
+        blocks += (f"<div class='tier-row'><div class='tier-tag'>{tier}</div>"
+                   f"<div class='seg-wrap'>{cards}</div></div>")
+        if ti < n - 1:
+            blocks += "<div class='tier-arrow'>▼ ▼ ▼</div>"
+    return f"<div class='chain'>{blocks}</div>"
+
+
+# Sector cycle phases, ordered 冷→热→回调 (climax precedes the high-level pullback)
+PHASE_CYCLE = ["冰点", "底部反弹", "酝酿", "酝酿反弹", "抱团", "强势", "高潮", "高位回调"]
+
+
+def _cycle_rail_html(current: str) -> str:
+    """Horizontal stepper of the sector cycle; current node highlighted,
+    earlier nodes dimmed-amber (passed)."""
+    cur_i = PHASE_CYCLE.index(current) if current in PHASE_CYCLE else -1
+    nodes = ""
+    for i, ph in enumerate(PHASE_CYCLE):
+        cls = "active" if i == cur_i else ("passed" if -1 < cur_i and i < cur_i else "")
+        nodes += (f"<div class='cycle-node {cls}'><div class='cn-dot'></div>"
+                  f"<div class='cn-lbl'>{ph}</div></div>")
+    return f"<div class='cycle-rail'>{nodes}</div>"
+
+
+def _rrg_quad_html(quadrant: str, op: str, *, rs=None, mom=None,
+                   critical_to: str | None = None) -> str:
+    """2×2 RRG grid; current quadrant highlighted with its operation label.
+
+    Layout (RRG convention): top=RS-Mom+, right=RS-Ratio+.
+      转强(↖)  领涨(↗)
+      落后(↙)  转弱(↘)
+    """
+    qcolor = {"领涨": "#E63946", "转强": "#FFB000", "转弱": "#4A8FE7", "落后": "#06A77D"}
+    qsub = {"领涨": "Leading", "转强": "Improving", "转弱": "Weakening", "落后": "Lagging"}
+    order = ["转强", "领涨", "落后", "转弱"]  # row-major top-left → bottom-right
+
+    cells = ""
+    for q in order:
+        if q == quadrant:
+            color = qcolor.get(q, "#FFB000")
+            bg = f"color-mix(in srgb, {color} 16%, transparent)"
+            crit = (f"<div class='qd-sub' style='color:#FFC74D'>⚠→{critical_to}</div>"
+                    if critical_to else "")
+            cells += (
+                f"<div class='rrg-cell' style='background:{bg};border:1.5px solid {color};'>"
+                f"<div style='color:{color};font-size:15px;font-weight:800'>{q}</div>"
+                f"<div class='qd-sub' style='color:{color}'>{qsub.get(q,'')}</div>"
+                f"<div class='qd-op' style='color:{color}'>{op}</div>{crit}</div>"
+            )
+        else:
+            cells += (f"<div class='rrg-cell'>{q}"
+                      f"<div class='qd-sub'>{qsub.get(q,'')}</div></div>")
+    rsmom = ""
+    if rs is not None and mom is not None:
+        rsmom = f" · RS-Ratio {rs:+.2f} / Mom {mom:+.2f}"
+    return (f"<div class='rrg-grid'>{cells}</div>"
+            f"<div class='rrg-axis'>← 弱　RS-Ratio　强 →{rsmom}</div>")
 
 
 @st.cache_data(show_spinner="计算容量抱团 ...")
@@ -397,7 +511,7 @@ if snap is not None:
 # Main Tabs — 市场 + 个股
 # ---------------------------------------------------------------------------
 
-main_tabs = st.tabs(["市场", "个股"])
+main_tabs = st.tabs(["市场", "板块", "个股"])
 
 with main_tabs[0]:
     # --- Market vitals strip ---
@@ -1215,8 +1329,128 @@ def _placeholder_card(title: str, subtitle: str, items: list[str]) -> str:
     )
 
 
-# -------- Main Tab 2: 个股 ---------
+# -------- Main Tab 2: 板块 — 大板块/concept 下钻 (产业链图谱 + 量化 overlay) ---------
 with main_tabs[1]:
+    # 两级选择：大板块(主题) → 概念，与 热力图 / HOT_CONCEPTS 一致
+    themes = list(HOT_CONCEPTS.keys())
+    tcol, ccol, _ = st.columns([1, 1.3, 1.7])
+    sel_theme = tcol.selectbox("大板块", themes, key="sector_theme")
+    concepts_in_theme = HOT_CONCEPTS[sel_theme]
+    sel_concept = ccol.selectbox("概念", concepts_in_theme, key="sector_concept")
+
+    data = _chain_strength(sel_concept)   # None when no chain YAML yet
+    has_chain = data is not None
+
+    # --- header: concept + quant snapshot ---
+    cyc = _cycle_detail()
+    crow = cyc[cyc["concept"] == sel_concept] if not cyc.empty else pd.DataFrame()
+    rot = _rrg_rotation(10)
+    rrow = rot[rot["concept"] == sel_concept] if not rot.empty else pd.DataFrame()
+    icon = concept_icon(sel_concept, sel_theme)
+    definition = data.get("definition", "") if has_chain else ""
+
+    st.markdown(
+        f"<div style='display:flex;align-items:baseline;gap:12px;margin:6px 0 2px'>"
+        f"<span style='font-size:24px'>{icon}</span>"
+        f"<span style='font-size:21px;font-weight:800;color:#E8ECF1'>{sel_concept}</span>"
+        f"<span style='color:#5F6877;font-size:11px;text-transform:uppercase;"
+        f"letter-spacing:0.08em'>{sel_theme}</span>"
+        f"<span style='color:#5F6877;font-size:12px'>{definition}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    cur_phase = str(crow.iloc[0].get("phase", "")) if not crow.empty else ""
+    sc30 = crow.iloc[0]["SC30"] if not crow.empty else None
+    sc3 = crow.iloc[0]["SC3"] if not crow.empty else None
+    rr = rrow.iloc[0] if not rrow.empty else None
+    cur_quad = str(rr["quadrant"]) if rr is not None else ""
+    op = str(rr["rotation_label"]) if rr is not None else "—"
+    crit_to = (rr["critical_to"] if rr is not None and rr.get("critical")
+               and rr.get("critical_to") else None)
+    rs_val = rr.get("rs_ratio") if rr is not None else None
+    mom_val = rr.get("rs_momentum") if rr is not None else None
+    r1d = rr.get("ret_1d") if rr is not None else None
+    r5d = rr.get("ret_5d") if rr is not None else None
+
+    # 周期阶段 — full-width horizontal stepper
+    st.markdown(
+        f'<div class="kpi-card"><div class="kpi-label">周期阶段</div>'
+        f'{_cycle_rail_html(cur_phase)}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # SC30/SC3 numbers  +  RRG four-quadrant
+    c1, c2 = st.columns([1, 1.25])
+    if sc30 is not None:
+        c1.markdown(kpi_card(
+            "SC30 / SC3",
+            f"{sc30:.0f} / {sc3:.0f}",
+            delta=(f"今日 {r1d:+.2f}% · 5日 {r5d:+.2f}%"
+                   if r1d is not None and r5d is not None else ""),
+            accent=True, value_size="xl",
+        ), unsafe_allow_html=True)
+    else:
+        c1.markdown(kpi_card("SC30 / SC3", "—"), unsafe_allow_html=True)
+    c2.markdown(
+        f'<div class="kpi-card"><div class="kpi-label">RRG 象限 · 操作</div>'
+        f'{_rrg_quad_html(cur_quad, op, rs=rs_val, mom=mom_val, critical_to=crit_to)}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # --- industry chain (live strength overlay) — only when a chain STRUCTURE
+    #     is filled in the YAML; poster-only concepts skip this and show the
+    #     poster at the bottom. No chain file at all → 待生成 hint.
+    has_structure = has_chain and bool(data.get("chain"))
+    if has_structure:
+        st.markdown(section_header("产业链强度", "环节颜色 = 今日等权涨幅"),
+                    unsafe_allow_html=True)
+        st.markdown(_render_chain_html(data), unsafe_allow_html=True)
+        st.caption("每个环节按**今日等权涨幅**着色（红涨绿跌，越深越强）；"
+                   "公司标签的百分比为各自当日涨跌。环节已覆盖该概念全部成分股。")
+        ks = data.get("key_stocks") or []
+        if ks:
+            st.markdown(
+                "<div style='margin-top:6px'><span style='color:#5F6877;font-size:11px;"
+                "text-transform:uppercase;letter-spacing:0.08em'>🏆 市场高关注标的　</span>"
+                + "　".join(f"<span style='color:#FFC74D;font-weight:600'>{k}</span>"
+                            for k in ks)
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+    elif not has_chain:
+        st.markdown(section_header("产业链强度", "环节颜色 = 今日等权涨幅"),
+                    unsafe_allow_html=True)
+        st.info(f"「{sel_concept}」的产业链图谱待生成"
+                f"（在 config/concept_chains/ 添加 YAML）。下方量化与成分股已可用。")
+
+    # --- full constituents ---
+    st.markdown(section_header("成分股", "Constituents"), unsafe_allow_html=True)
+    st.markdown(_constituent_table_html(_sector_constituents(sel_concept)),
+                unsafe_allow_html=True)
+
+    # --- industry-chain poster (always visible, at the bottom) ---
+    poster = data.get("poster") if has_chain else None
+    if poster:
+        ppath = (PROJECT_ROOT / poster) if not Path(poster).is_absolute() else Path(poster)
+        if ppath.exists():
+            st.markdown(section_header("产业链图谱", "Industry chain map"),
+                        unsafe_allow_html=True)
+            # Constrain to a share of the viewport so the tall poster never
+            # dominates the screen (adapts to any monitor via vh).
+            st.markdown(
+                f"<div style='text-align:center;margin:4px 0'>"
+                f"<img src='data:image/png;base64,{_poster_b64(str(ppath))}' "
+                f"style='max-width:100%;max-height:72vh;width:auto;height:auto;"
+                f"border:1px solid var(--border);border-radius:6px'/></div>",
+                unsafe_allow_html=True,
+            )
+            st.caption("如需查看大图，可打开 doc/concept_images/ 下的原图。")
+
+
+# -------- Main Tab 3: 个股 ---------
+with main_tabs[2]:
     col_input, _ = st.columns([1, 3])
     stock_input = col_input.text_input(
         "输入股票代码",

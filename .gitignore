@@ -47,3 +47,4 @@ secrets_local.py
 
 # Doc (PDFs may be large)
 doc/*.pdf
+doc

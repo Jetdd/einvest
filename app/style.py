@@ -486,6 +486,90 @@ hr {
 /* Plotly chart container background */
 .js-plotly-plot, .plotly { background: transparent !important; }
 .user-select-none.svg-container { background: transparent !important; }
+
+/* ────────────────────────────────────────────────────────────────────────
+   Industry chain (产业链图谱)
+   ──────────────────────────────────────────────────────────────────────── */
+.chain { margin: 6px 0 2px; }
+.tier-row { display: flex; align-items: stretch; gap: 12px; margin: 5px 0; }
+.tier-tag {
+  flex: 0 0 42px; display: flex; align-items: center; justify-content: center;
+  writing-mode: vertical-rl; text-orientation: upright;
+  background: var(--bg-muted); border: 1px solid var(--border);
+  border-radius: 4px; font-weight: 800; font-size: 13px; letter-spacing: 0.35em;
+  color: var(--text-muted);
+}
+.seg-wrap { flex: 1; display: flex; gap: 10px; flex-wrap: wrap; }
+.seg-card {
+  flex: 1 1 200px; min-width: 178px;
+  border: 1px solid var(--border); border-radius: 5px; padding: 9px 11px;
+  transition: border-color 120ms ease;
+}
+.seg-card:hover { border-color: var(--border-strong); }
+.seg-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.seg-name { font-weight: 700; font-size: 13px; color: var(--text); }
+.seg-ret { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12.5px; }
+.seg-sub {
+  font-size: 9.5px; color: var(--text-subtle); margin: 3px 0 7px;
+  letter-spacing: 0.02em; text-transform: uppercase;
+}
+.seg-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chain-chip {
+  font-size: 11px; padding: 2px 7px; border-radius: 3px;
+  background: var(--bg-muted); border: 1px solid var(--border);
+  color: #C9D2DC; font-weight: 500; white-space: nowrap;
+}
+.chain-chip .cp { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
+.tier-arrow {
+  text-align: center; color: var(--text-subtle); font-size: 11px;
+  margin: -1px 0; padding-left: 42px; letter-spacing: 0.4em;
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   Cycle-phase rail (周期阶段 horizontal stepper)
+   ──────────────────────────────────────────────────────────────────────── */
+.cycle-rail {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  position: relative; padding: 10px 6px 4px;
+}
+.cycle-rail::before {
+  content: ""; position: absolute; top: 15px; left: 18px; right: 18px;
+  height: 2px; background: var(--border); z-index: 0;
+}
+.cycle-node {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  position: relative; z-index: 1; flex: 1;
+}
+.cn-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--bg-card); border: 1.5px solid var(--border-strong);
+}
+.cn-lbl { font-size: 10px; color: var(--text-subtle); white-space: nowrap; font-weight: 500; }
+.cycle-node.active .cn-dot {
+  width: 13px; height: 13px; background: var(--accent);
+  border-color: var(--accent); box-shadow: 0 0 11px var(--accent);
+}
+.cycle-node.active .cn-lbl { color: var(--accent); font-weight: 800; font-size: 11.5px; }
+.cycle-node.passed .cn-dot { background: var(--accent-dim); border-color: var(--accent-dim); }
+
+/* ────────────────────────────────────────────────────────────────────────
+   RRG 4-quadrant
+   ──────────────────────────────────────────────────────────────────────── */
+.rrg-grid {
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+  gap: 6px; margin-top: 4px;
+}
+.rrg-cell {
+  border: 1px solid var(--border); border-radius: 5px;
+  min-height: 52px; padding: 8px 6px; text-align: center;
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  color: var(--text-muted); font-weight: 600; font-size: 13px;
+}
+.rrg-cell .qd-sub { font-size: 8.5px; color: var(--text-subtle);
+  text-transform: uppercase; letter-spacing: 0.08em; }
+.rrg-cell .qd-op { font-size: 10px; font-weight: 700; margin-top: 2px; }
+.rrg-axis { font-size: 9px; color: var(--text-subtle); text-align: center;
+  text-transform: uppercase; letter-spacing: 0.1em; margin-top: 5px; }
 </style>
 """
 
